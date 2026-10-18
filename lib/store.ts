@@ -6,8 +6,9 @@ import { accounts as mockAccounts } from "@/mock/accounts";
 import type { ChatMode } from "@/mock/ai-chat";
 import { NOW } from "@/mock/clock";
 import { competitorSuggestions, competitors as mockCompetitors } from "@/mock/competitors";
+import { seedChats, type AiChat, type AiMsg } from "@/mock/ai-studio";
 import { buildEngagement } from "@/mock/engagement";
-import { recommendations as mockRecs } from "@/mock/insights";
+import { insights as mockInsights, recommendations as mockRecs } from "@/mock/insights";
 import { notifications as mockNotifications } from "@/mock/notifications";
 import { initialPhotos, seeded } from "@/mock/photos";
 import type {
@@ -26,6 +27,8 @@ import type {
 } from "@/mock/types";
 
 export type Theme = "light" | "dark" | "system";
+/** Demo switch: AI as a center tab (default) or as the footer pop-up with the Create tab. */
+export type AiLayout = "tab" | "footer";
 
 export type SheetState =
   | { type: "accounts" }
@@ -44,10 +47,6 @@ export type SheetState =
   | { type: "report" }
   | { type: "logout" };
 
-export type ChatMessage =
-  | { id: string; role: "user"; text: string; mode: ChatMode }
-  | { id: string; role: "ai"; answerId: string; mode: ChatMode };
-
 type PerAccount<T> = Record<string, T>;
 
 interface DemoData {
@@ -58,7 +57,7 @@ interface DemoData {
   recs: PerAccount<Recommendation[]>;
   competitors: PerAccount<Competitor[]>;
   notifications: PerAccount<AppNotification[]>;
-  chat: PerAccount<ChatMessage[]>;
+  chats: PerAccount<AiChat[]>;
   lastAnalysis: PerAccount<string | undefined>;
 }
 
@@ -74,6 +73,11 @@ interface State extends DemoData {
   viewer: { ids: string[]; index: number } | null;
   draft: { photoIds: string[]; caption?: L; time?: string };
   chatMode: ChatMode;
+  aiLayout: AiLayout;
+  /** Open AI chat; null shows a new, empty chat. */
+  activeChatId: string | null;
+  /** What's in the AI chat input: text and attached photos. */
+  composer: { text: string; photoIds: string[] };
   /** Gallery select mode: its toolbar takes the AI banner's place. */
   selecting: boolean;
   setSelecting: (value: boolean) => void;
@@ -115,8 +119,13 @@ interface State extends DemoData {
   markAllNotificationsRead: () => void;
 
   setChatMode: (mode: ChatMode) => void;
-  pushChat: (msg: ChatMessage) => void;
-  clearChat: () => void;
+  setAiLayout: (layout: AiLayout) => void;
+  setComposer: (composer: Partial<State["composer"]>) => void;
+  newChat: () => void;
+  openChat: (id: string) => void;
+  /** Adds messages to the open chat, starting a new chat if none is open. Returns the chat id. */
+  pushAi: (msgs: AiMsg[], opts?: { title?: L; chatId?: string }) => string;
+  updateAiMsg: (msgId: string, patch: Partial<AiMsg>) => void;
 
   addAccount: (handle: string) => void;
   reconnectAccount: (id: string) => void;
@@ -137,7 +146,14 @@ function freshData(): DemoData {
     recs: per((id) => structuredClone(mockRecs[id])),
     competitors: per((id) => structuredClone(mockCompetitors[id])),
     notifications: per((id) => structuredClone(mockNotifications[id])),
-    chat: per(() => []),
+    chats: per((id) =>
+      seedChats({
+        account: mockAccounts.find((a) => a.id === id)!,
+        photos: initialPhotos[id],
+        insights: mockInsights[id],
+        competitors: mockCompetitors[id],
+      }),
+    ),
     lastAnalysis: per(() => undefined),
   };
 }
@@ -165,13 +181,17 @@ export const useStore = create<State>()(
         viewer: null,
         draft: { photoIds: [] },
         chatMode: "post",
+        aiLayout: "tab",
+        activeChatId: null,
+        composer: { text: "", photoIds: [] },
         selecting: false,
         setSelecting: (selecting) => set({ selecting }),
         switchTick: 0,
 
         setLang: (lang) => set({ lang }),
         setTheme: (theme) => set({ theme }),
-        switchAccount: (id) => set((s) => ({ activeAccountId: id, switchTick: s.switchTick + 1, draft: { photoIds: [] }, viewer: null })),
+        switchAccount: (id) =>
+          set((s) => ({ activeAccountId: id, switchTick: s.switchTick + 1, draft: { photoIds: [] }, viewer: null, activeChatId: null, composer: { text: "", photoIds: [] } })),
         openSheet: (sheet) => set({ sheet }),
         closeSheet: () => set({ sheet: null }),
         openViewer: (ids, index) => set({ viewer: { ids, index } }),
@@ -185,6 +205,7 @@ export const useStore = create<State>()(
           set((s) => ({
             photos: { ...s.photos, [acc()]: s.photos[acc()].filter((p) => !ids.includes(p.id)) },
             draft: { ...s.draft, photoIds: s.draft.photoIds.filter((id) => !ids.includes(id)) },
+            composer: { ...s.composer, photoIds: s.composer.photoIds.filter((id) => !ids.includes(id)) },
           }));
           return removed;
         },
@@ -292,8 +313,34 @@ export const useStore = create<State>()(
           set((s) => ({ notifications: { ...s.notifications, [acc()]: s.notifications[acc()].map((n) => ({ ...n, read: true })) } })),
 
         setChatMode: (chatMode) => set({ chatMode }),
-        pushChat: (msg) => set((s) => ({ chat: { ...s.chat, [acc()]: [...s.chat[acc()], msg] } })),
-        clearChat: () => set((s) => ({ chat: { ...s.chat, [acc()]: [] } })),
+        setAiLayout: (aiLayout) => set({ aiLayout, sheet: null }),
+        setComposer: (patch) => set((s) => ({ composer: { ...s.composer, ...patch } })),
+        newChat: () => set({ activeChatId: null, composer: { text: "", photoIds: [] } }),
+        openChat: (id) => {
+          const chat = (get().chats[acc()] ?? []).find((c) => c.id === id);
+          set({ activeChatId: id, chatMode: chat?.mode ?? get().chatMode, composer: { text: "", photoIds: [] } });
+        },
+        pushAi: (msgs, opts) => {
+          const s = get();
+          const list = s.chats[acc()] ?? [];
+          const existing = list.find((c) => c.id === (opts?.chatId ?? s.activeChatId));
+          const at = NOW.toISOString();
+          const chat: AiChat = existing
+            ? { ...existing, at, messages: [...existing.messages, ...msgs] }
+            : { id: nextId("chat"), title: opts?.title ?? { en: "New chat", ar: "محادثة جديدة" }, mode: s.chatMode, at, messages: msgs };
+          // Most recent chat first, like ChatGPT. Late answers for a chat that's no longer open don't switch to it.
+          set({ activeChatId: opts?.chatId ? s.activeChatId : chat.id, chats: { ...s.chats, [acc()]: [chat, ...list.filter((c) => c.id !== chat.id)] } });
+          return chat.id;
+        },
+        updateAiMsg: (msgId, patch) =>
+          set((s) => ({
+            chats: {
+              ...s.chats,
+              [acc()]: (s.chats[acc()] ?? []).map((c) =>
+                c.messages.some((m) => m.id === msgId) ? { ...c, messages: c.messages.map((m) => (m.id === msgId ? ({ ...m, ...patch } as AiMsg) : m)) } : c,
+              ),
+            },
+          })),
 
         addAccount: (handle) => {
           const clean = handle.replace(/^@/, "").trim().toLowerCase();
@@ -318,7 +365,16 @@ export const useStore = create<State>()(
         updateProfile: (id, patch) => set((s) => ({ accounts: s.accounts.map((a) => (a.id === id ? { ...a, ...patch } : a)) })),
         setNotificationPref: (key, value) => set((s) => ({ notificationPrefs: { ...s.notificationPrefs, [key]: value } })),
         setLoggedOut: (loggedOut) => set({ loggedOut, sheet: null, viewer: null }),
-        resetDemo: () => set((s) => ({ ...freshData(), switchTick: s.switchTick + 1, draft: { photoIds: [] }, sheet: null, viewer: null })),
+        resetDemo: () =>
+          set((s) => ({
+            ...freshData(),
+            switchTick: s.switchTick + 1,
+            draft: { photoIds: [] },
+            sheet: null,
+            viewer: null,
+            activeChatId: null,
+            composer: { text: "", photoIds: [] },
+          })),
       };
     },
     {
@@ -329,7 +385,7 @@ export const useStore = create<State>()(
         const p = (persisted ?? {}) as Partial<State>;
         return { ...current, ...p, notificationPrefs: { ...current.notificationPrefs, ...(p.notificationPrefs ?? {}) } };
       },
-      partialize: (s) => ({ lang: s.lang, theme: s.theme, activeAccountId: s.activeAccountId, notificationPrefs: s.notificationPrefs }),
+      partialize: (s) => ({ lang: s.lang, theme: s.theme, activeAccountId: s.activeAccountId, notificationPrefs: s.notificationPrefs, aiLayout: s.aiLayout }),
     },
   ),
 );
@@ -348,7 +404,9 @@ export const useNotifications = () => useStore((s) => s.notifications[s.activeAc
 export const useCompetitors = () => useStore((s) => s.competitors[s.activeAccountId]);
 export const useRecs = () => useStore((s) => s.recs[s.activeAccountId]);
 export const useAlbums = () => useStore((s) => s.albums[s.activeAccountId]);
-export const useChat = () => useStore((s) => s.chat[s.activeAccountId]);
+export const useChats = () => useStore((s) => s.chats[s.activeAccountId] ?? EMPTY_CHATS);
+export const useActiveChat = () => useStore((s) => (s.chats[s.activeAccountId] ?? EMPTY_CHATS).find((c) => c.id === s.activeChatId));
+const EMPTY_CHATS: AiChat[] = [];
 
 export function unreadFor(s: State, accountId: string) {
   return (s.engagement[accountId] ?? []).filter((e) => e.unread && !e.sent).length;

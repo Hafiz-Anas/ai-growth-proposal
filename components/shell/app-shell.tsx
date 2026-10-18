@@ -2,6 +2,7 @@
 
 import { DirectionProvider } from "@base-ui/react/direction-provider";
 import { MotionConfig } from "framer-motion";
+import { usePathname } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
 import { Toaster } from "sonner";
 import { LogoMark } from "@/components/kit";
@@ -9,6 +10,7 @@ import { PhotoViewer } from "@/components/gallery/photo-viewer";
 import { SheetHost } from "@/components/sheets/sheet-host";
 import { useMediaQuery, useMounted, useT } from "@/lib/hooks";
 import { useStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
 import { AiBanner } from "./ai-banner";
 import { LoggedOut } from "./logged-out";
 import { Sidebar } from "./sidebar";
@@ -20,6 +22,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { dir, lang } = useT();
   const theme = useStore((s) => s.theme);
   const loggedOut = useStore((s) => s.loggedOut);
+  const aiLayout = useStore((s) => s.aiLayout);
+  const onAi = usePathname() === "/ai";
   const systemDark = useMediaQuery("(prefers-color-scheme: dark)");
   const dark = theme === "dark" || (theme === "system" && systemDark);
 
@@ -54,10 +58,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           <>
             <Sidebar />
             <div className="min-h-dvh lg:ms-[244px]">
-              <TopBar />
-              <main className="mx-auto w-full max-w-[935px] pb-[calc(118px+env(safe-area-inset-bottom))] lg:px-8 lg:pb-28">{children}</main>
+              {!onAi && <TopBar />}
+              <main
+                className={cn(
+                  "mx-auto w-full max-w-[935px] lg:px-8",
+                  aiLayout === "footer" ? "pb-[calc(118px+env(safe-area-inset-bottom))] lg:pb-28" : "pb-[calc(76px+env(safe-area-inset-bottom))] lg:pb-12",
+                )}
+              >
+                {children}
+              </main>
             </div>
-            <AiBanner />
+            {aiLayout === "footer" && !onAi && <AiBanner />}
             <TabBar />
             <PhotoViewer />
             <SheetHost />

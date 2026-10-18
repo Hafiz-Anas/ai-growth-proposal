@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronRight, CircleHelp, CreditCard, Globe, Info, Link2, LogOut, MessageSquare, Moon, Plus, RotateCcw, Users } from "lucide-react";
+import { Bell, ChevronRight, CircleHelp, CreditCard, Globe, Info, Link2, LogOut, MessageSquare, Moon, Plus, RotateCcw, Sparkles, Users } from "lucide-react";
 import Image from "next/image";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
@@ -8,7 +8,7 @@ import { Avatar, Btn, Segmented, Skel } from "@/components/kit";
 import { Switch } from "@/components/ui/switch";
 import { compact, num } from "@/lib/format";
 import { useFakeLoading, useT } from "@/lib/hooks";
-import { unreadFor, useAccount, usePhotos, useStore, type Theme } from "@/lib/store";
+import { unreadFor, useAccount, usePhotos, useStore, type AiLayout, type Theme } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { Lang } from "@/mock/types";
 
@@ -209,6 +209,26 @@ function Settings() {
             className="w-52"
           />
         </div>
+      </Group>
+
+      <Group title={t("aiLayout")}>
+        <div className="flex items-center gap-3 px-4 py-2.5">
+          <Sparkles className="size-5 shrink-0 text-muted-foreground" />
+          <Segmented<AiLayout>
+            label={t("aiLayout")}
+            value={state.aiLayout}
+            onChange={(v) => {
+              state.setAiLayout(v);
+              toast.success(t("settingSaved"));
+            }}
+            options={[
+              { value: "tab", label: t("aiLayoutTab") },
+              { value: "footer", label: t("aiLayoutFooter") },
+            ]}
+            className="flex-1 sm:max-w-xs"
+          />
+        </div>
+        <p className="px-4 py-3 text-[13px] leading-snug text-muted-foreground">{t("aiLayoutHint")}</p>
       </Group>
 
       <Group title={t("help")}>

@@ -21,6 +21,8 @@ interface SheetProps {
   desktop?: "dialog" | "panel";
   /** On phones: fit content (default) or take almost the full height. */
   tall?: boolean;
+  /** Desktop side panel at a wider size. */
+  wide?: boolean;
   bodyClassName?: string;
 }
 
@@ -30,7 +32,7 @@ const spring = { type: "spring", damping: 32, stiffness: 340, mass: 0.9 } as con
  * Bottom sheet on phones (drag down to close), dialog or side panel on desktop.
  * Built on Base UI Dialog for focus trapping, Escape and screen reader semantics.
  */
-export function Sheet({ open, onClose, title, start, end, footer, children, desktop = "dialog", tall, bodyClassName }: SheetProps) {
+export function Sheet({ open, onClose, title, start, end, footer, children, desktop = "dialog", tall, wide, bodyClassName }: SheetProps) {
   const isDesktop = useIsDesktop();
   const { t, dir } = useT();
   const drag = useDragControls();
@@ -73,7 +75,8 @@ export function Sheet({ open, onClose, title, start, end, footer, children, desk
                 mode === "sheet" && "inset-x-0 bottom-0 max-h-[92dvh] rounded-t-[22px] pb-safe",
                 mode === "sheet" && tall && "h-[92dvh]",
                 mode === "dialog" && "inset-0 m-auto h-fit max-h-[86dvh] w-[min(500px,calc(100vw-2rem))] rounded-2xl",
-                mode === "panel" && "inset-y-0 end-0 w-[420px] border-s",
+                mode === "panel" && "inset-y-0 end-0 border-s",
+                mode === "panel" && (wide ? "w-[min(560px,100vw)]" : "w-[420px]"),
               )}
               render={
                 <motion.div

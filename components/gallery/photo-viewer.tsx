@@ -10,6 +10,7 @@ import {
   Heart,
   MessageCircle,
   PencilLine,
+  Sparkles,
   SquarePlus,
   Trash2,
   TrendingUp,
@@ -38,11 +39,16 @@ export function PhotoViewer() {
 function ViewerContent() {
   const { t, l, lang, dir } = useT();
   const isDesktop = useIsDesktop();
-  const viewer = useStore((s) => s.viewer)!;
+  // Keep the last state while the viewer animates closed (the store is already null by then).
+  const current = useStore((s) => s.viewer);
+  const [last, setLast] = useState(current);
+  if (current && current !== last) setLast(current);
+  const viewer = current ?? last!;
   const close = useStore((s) => s.closeViewer);
   const openSheet = useStore((s) => s.openSheet);
   const photos = usePhotos();
   const actions = usePhotoActions();
+  const aiTab = useStore((s) => s.aiLayout === "tab");
   const popupRef = useRef<HTMLDivElement>(null);
   const [direction, setDirection] = useState(0);
   const [chrome, setChrome] = useState(true);
@@ -178,8 +184,18 @@ function ViewerContent() {
               </p>
             )}
           </div>
-          <div className="mx-auto mt-2 grid max-w-xl grid-cols-5 px-2 pb-2">
-            <Action icon={<SquarePlus />} label={t("createPost")} onClick={() => actions.createPost([photo.id])} />
+          <div className="mx-auto mt-3 flex max-w-xl justify-center px-4">
+            <button
+              type="button"
+              onClick={() => actions.createWithAi([photo.id])}
+              className="inline-flex h-11 items-center gap-2 rounded-full bg-white px-5 text-[15px] font-semibold text-black shadow-lg transition-transform hover:bg-white/90 active:scale-[0.97]"
+            >
+              <Sparkles className="size-[18px] text-[#2e7d4f]" />
+              {t("createWithAi")}
+            </button>
+          </div>
+          <div className={cn("mx-auto mt-2 grid max-w-xl px-2 pb-2", aiTab ? "grid-cols-4" : "grid-cols-5")}>
+            {!aiTab && <Action icon={<SquarePlus />} label={t("createPost")} onClick={() => actions.createPost([photo.id])} />}
             <Action icon={<CalendarClock />} label={t("schedule")} onClick={() => actions.schedule([photo.id])} />
             <Action icon={<FolderPlus />} label={t("addToAlbum")} onClick={() => actions.addToAlbum([photo.id])} />
             <Action
