@@ -58,7 +58,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <>
             <Sidebar />
             <div className="min-h-dvh lg:ms-[244px]">
-              {!onAi && <TopBar />}
+              {/* The AI tab has its own header on phones; desktop keeps the regular one. */}
+              <TopBar className={cn(onAi && "max-lg:hidden")} />
               <main
                 className={cn(
                   "mx-auto w-full max-w-[935px] lg:px-8",

@@ -15,7 +15,6 @@ const en = {
   more: "More",
   // Shell
   switchAccount: "Switch account",
-  openProfile: "Open profile",
   aiBanner: "Ask AI about your posts, analytics or competitors",
   aiBannerShort: "Ask AI",
   connectedTo: "Connected to Instagram",
@@ -374,7 +373,6 @@ const ar: Record<MessageKey, string> = {
   notifications: "الإشعارات",
   more: "المزيد",
   switchAccount: "تبديل الحساب",
-  openProfile: "فتح الملف الشخصي",
   aiBanner: "اسأل الذكاء الاصطناعي عن منشوراتك أو إحصاءاتك أو منافسيك",
   aiBannerShort: "اسأل الذكاء الاصطناعي",
   connectedTo: "مرتبط بإنستغرام",

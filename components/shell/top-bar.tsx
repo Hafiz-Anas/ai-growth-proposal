@@ -1,25 +1,20 @@
 "use client";
 
-import { Bell, ChevronDown } from "lucide-react";
-import Link from "next/link";
-import { Avatar, IconBtn } from "@/components/kit";
-import { num } from "@/lib/format";
+import { ChevronDown } from "lucide-react";
 import { useT } from "@/lib/hooks";
-import { unreadFor, useAccount, useNotifications, useStore } from "@/lib/store";
+import { unreadFor, useAccount, useStore } from "@/lib/store";
+import { cn } from "@/lib/utils";
+import { HeaderActions } from "./header-actions";
 
-export function TopBar() {
-  const { t, lang } = useT();
+export function TopBar({ className }: { className?: string }) {
+  const { t } = useT();
   const account = useAccount();
   const openSheet = useStore((s) => s.openSheet);
-  const unread = useNotifications().filter((n) => !n.read).length;
   const otherUnread = useStore((s) => s.accounts.some((a) => a.id !== s.activeAccountId && unreadFor(s, a.id) > 0));
 
   return (
-    <header className="sticky top-0 z-30 border-b border-transparent bg-background/85 pt-safe backdrop-blur-xl supports-[backdrop-filter]:bg-background/75">
-      <div className="mx-auto flex h-14 max-w-[935px] items-center gap-1 px-2 lg:px-8">
-        <Link href="/profile" aria-label={t("openProfile")} className="grid size-10 place-items-center rounded-full">
-          <Avatar src={account.avatar} alt={account.handle} size={32} ring />
-        </Link>
+    <header className={cn("sticky top-0 z-30 border-b border-transparent bg-background/85 pt-safe backdrop-blur-xl supports-[backdrop-filter]:bg-background/75", className)}>
+      <div className="mx-auto flex h-14 max-w-[935px] items-center gap-1 ps-2.5 pe-2 lg:px-8">
         <button
           type="button"
           onClick={() => openSheet({ type: "accounts" })}
@@ -34,14 +29,7 @@ export function TopBar() {
           {otherUnread && <span className="size-2 shrink-0 rounded-full bg-bad" aria-hidden />}
         </button>
         <div className="flex-1" />
-        <IconBtn label={unread ? `${t("notifications")}, ${t("unreadCount", { n: num(unread, lang) })}` : t("notifications")} onClick={() => openSheet({ type: "notifications" })}>
-          <Bell strokeWidth={1.8} />
-          {unread > 0 && (
-            <span className="absolute end-1 top-1 grid h-[18px] min-w-[18px] place-items-center rounded-full bg-bad px-1 text-[11px] leading-none font-bold text-white ring-2 ring-background">
-              {num(unread, lang)}
-            </span>
-          )}
-        </IconBtn>
+        <HeaderActions />
       </div>
     </header>
   );

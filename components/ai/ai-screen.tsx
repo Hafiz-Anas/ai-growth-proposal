@@ -5,9 +5,10 @@ import { useState } from "react";
 import { IconBtn } from "@/components/kit";
 import { useIsDesktop, useT } from "@/lib/hooks";
 import { useActiveChat, useStore } from "@/lib/store";
+import { HeaderActions } from "@/components/shell/header-actions";
 import { ChatView } from "./chat-view";
 
-/** The AI tab: a full-screen chat between the top of the screen and the tab bar (or beside the sidebar on desktop). */
+/** The AI tab: a full-screen chat between the header and the tab bar (or beside the sidebar, below the header, on desktop). */
 export function AiScreen() {
   const { t, l } = useT();
   const isDesktop = useIsDesktop();
@@ -15,12 +16,12 @@ export function AiScreen() {
   const [history, setHistory] = useState(false);
 
   return (
-    <div className="fixed inset-x-0 top-0 bottom-[calc(53px+env(safe-area-inset-bottom))] z-20 flex flex-col bg-background pt-safe lg:start-[244px] lg:bottom-0">
+    <div className="fixed inset-x-0 top-0 bottom-[calc(53px+env(safe-area-inset-bottom))] z-20 flex flex-col bg-background pt-safe lg:start-[244px] lg:top-14 lg:bottom-0">
       <header className="flex h-14 shrink-0 items-center gap-1 px-2 lg:hidden">
         <IconBtn label={t("chats")} onClick={() => setHistory((h) => !h)}>
           <History strokeWidth={1.8} />
         </IconBtn>
-        <h1 className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[16px] font-semibold">
+        <h1 className="flex min-w-0 flex-1 items-center gap-1.5 px-1 text-[16px] font-semibold">
           {chat ? (
             <span className="truncate" dir="auto">
               {l(chat.title)}
@@ -34,9 +35,10 @@ export function AiScreen() {
         <IconBtn label={t("newChat")} onClick={() => (useStore.getState().newChat(), setHistory(false))}>
           <SquarePen strokeWidth={1.8} />
         </IconBtn>
+        <HeaderActions />
       </header>
       <h1 className="sr-only max-lg:hidden">{t("aiTab")}</h1>
-      <div className="flex min-h-0 flex-1 lg:pt-4">
+      <div className="flex min-h-0 flex-1 lg:pt-1">
         <ChatView sidebar={isDesktop} historyOpen={history} onHistoryOpenChange={setHistory} />
       </div>
     </div>

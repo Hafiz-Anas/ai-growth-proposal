@@ -1,25 +1,21 @@
 "use client";
 
-import { Bell } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Avatar, Wordmark } from "@/components/kit";
+import { Wordmark } from "@/components/kit";
 import { num } from "@/lib/format";
 import { useT } from "@/lib/hooks";
-import { unreadFor, useAccount, useNotifications, useStore } from "@/lib/store";
+import { unreadFor, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { isActive, navFor } from "./nav";
 
 const item = "flex h-12 w-full items-center gap-4 rounded-xl px-3 text-[15px] transition-colors hover:bg-muted";
 
-/** Desktop navigation, like Instagram on the web. */
+/** Desktop navigation, like Instagram on the web. Notifications and Profile live in the header. */
 export function Sidebar() {
   const pathname = usePathname();
   const { t, lang } = useT();
-  const account = useAccount();
-  const openSheet = useStore((s) => s.openSheet);
   const unread = useStore((s) => unreadFor(s, s.activeAccountId));
-  const unreadNotifications = useNotifications().filter((n) => !n.read).length;
   const layout = useStore((s) => s.aiLayout);
 
   return (
@@ -50,17 +46,6 @@ export function Sidebar() {
             </Link>
           );
         })}
-        <button type="button" className={item} onClick={() => openSheet({ type: "notifications" })}>
-          <span className="relative">
-            <Bell className="size-[26px]" strokeWidth={1.8} />
-            {unreadNotifications > 0 && <span className="absolute -end-0.5 top-0 size-2.5 rounded-full bg-bad ring-2 ring-background" />}
-          </span>
-          {t("notifications")}
-        </button>
-        <Link href="/profile" aria-current={pathname === "/profile" ? "page" : undefined} className={cn(item, pathname === "/profile" && "font-bold")}>
-          <Avatar src={account.avatar} alt={account.handle} size={26} className={cn(pathname === "/profile" && "ring-2 ring-foreground")} />
-          {t("profile")}
-        </Link>
       </nav>
       <p className="px-3 text-[11px] leading-relaxed text-muted-foreground">
         {t("by")}
