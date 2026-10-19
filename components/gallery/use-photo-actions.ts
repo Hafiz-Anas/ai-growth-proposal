@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { num } from "@/lib/format";
 import { useT } from "@/lib/hooks";
@@ -8,29 +7,22 @@ import { useStore } from "@/lib/store";
 import { useOpenAi } from "@/components/ai/use-open-ai";
 
 export function usePhotoActions() {
-  const router = useRouter();
   const { t, lang } = useT();
   const s = useStore.getState;
   const openAi = useOpenAi();
 
   return {
-    /** Opens the AI chat with the photos attached, ready to turn into a post. */
+    /** Opens the AI chat with the photos attached, ready to turn into a post about them. */
     createWithAi(ids: string[]) {
       openAi(ids);
     },
-    /** With the AI tab, creating a post happens in the AI chat; the footer layout keeps the classic composer. */
-    createPost(ids: string[]) {
-      if (s().aiLayout === "tab") return openAi(ids);
-      s().setDraft({ photoIds: ids });
-      s().closeViewer();
-      s().setSelecting(false);
-      router.push("/create");
+    /** A ready post opens its full preview, where it can be scheduled, posted or edited. */
+    openPost(id: string) {
+      s().openSheet({ type: "post", photoId: id });
     },
-    schedule(ids: string[]) {
-      s().openSheet({ type: "schedule", photoIds: ids });
-    },
-    addToAlbum(ids: string[]) {
-      s().openSheet({ type: "album", photoIds: ids });
+    /** From inside an album, the sheet also offers to move the photos out of it. */
+    addToAlbum(ids: string[], fromAlbumId?: string) {
+      s().openSheet({ type: "album", photoIds: ids, fromAlbumId });
     },
     favorite(ids: string[], value: boolean) {
       s().toggleFavorite(ids, value);

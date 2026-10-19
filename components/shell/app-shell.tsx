@@ -12,6 +12,7 @@ import { useMediaQuery, useMounted, useT } from "@/lib/hooks";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { AiBanner } from "./ai-banner";
+import { EdgeSwipeBack } from "./edge-swipe";
 import { LoggedOut } from "./logged-out";
 import { Sidebar } from "./sidebar";
 import { TabBar } from "./tab-bar";
@@ -73,6 +74,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <TabBar />
             <PhotoViewer />
             <SheetHost />
+            <EdgeSwipeBack />
           </>
         )}
         <Toaster

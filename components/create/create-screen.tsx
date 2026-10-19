@@ -1,18 +1,19 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Bookmark, CalendarClock, Check, Heart, MapPin, MessageCircle, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
-import Image from "next/image";
+import { CalendarClock, Check, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Avatar, Btn, Card, Chip, Segmented, Skel } from "@/components/kit";
+import { Btn, Card, Chip, Segmented, Skel } from "@/components/kit";
 import { PhotoTile } from "@/components/gallery/photo-tile";
+import { PostPreview } from "@/components/gallery/post-preview";
 import { num, when } from "@/lib/format";
 import { useFakeLoading, useInsights, useT } from "@/lib/hooks";
 import { useAccount, usePhotos, useStore } from "@/lib/store";
 import { suggestedTime } from "@/lib/suggest";
 import { cn } from "@/lib/utils";
+import { captionFor as categoryCaption, hashtagsFor, splitCaption } from "@/mock/categories";
 import type { CaptionTone, L, Lang, Photo } from "@/mock/types";
 
 export function CreateScreen() {
@@ -83,17 +84,15 @@ function Composer({ photos }: { photos: Photo[] }) {
   const openSheet = useStore((s) => s.openSheet);
   const setDraft = useStore((s) => s.setDraft);
 
-  const captionFor = (tone: CaptionTone): L => ({
-    en: account.captions[tone].en.replace("{dish}", photos[0].dish.en),
-    ar: account.captions[tone].ar.replace("{dish}", photos[0].dish.ar),
-  });
+  const captionFor = (tone: CaptionTone): L => categoryCaption(account, photos[0], tone);
 
   const [captionLang, setCaptionLang] = useState<Lang>(lang);
   const [tone, setTone] = useState<CaptionTone>(draft.caption ? "friendly" : "base");
-  const [text, setText] = useState<L>(draft.caption ?? photos[0].caption ?? captionFor("base"));
+  const [text, setText] = useState<L>(draft.caption ?? (photos[0].caption ? splitCaption(photos[0].caption).text : captionFor("base")));
   const [edited, setEdited] = useState(false);
   const [writing, setWriting] = useState(false);
-  const [tags, setTags] = useState<string[]>(account.hashtags.slice(0, 5));
+  const categoryTags = hashtagsFor(account, photos[0].category);
+  const [tags, setTags] = useState<string[]>(categoryTags);
   const [extraTags, setExtraTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState("");
   const bestTime = draft.time ?? suggestedTime(insights);
@@ -108,7 +107,7 @@ function Composer({ photos }: { photos: Photo[] }) {
     }, 650);
   };
 
-  const allTags = [...account.hashtags, ...extraTags];
+  const allTags = [...new Set([...categoryTags, ...account.hashtags, ...extraTags])];
   const finalCaption: L = {
     en: `${text.en}\n\n${tags.join(" ")}`.trim(),
     ar: `${text.ar}\n\n${tags.join(" ")}`.trim(),
@@ -258,14 +257,6 @@ function Composer({ photos }: { photos: Photo[] }) {
               </p>
               <p className="mt-0.5 text-[17px] font-semibold">{when(bestTime, lang)}</p>
               <p className="mt-0.5 text-[13px] text-muted-foreground">{t("bestTimeWhy", { n: num(insights.postsAnalyzed, lang) })}</p>
-              <Btn
-                variant="secondary"
-                size="sm"
-                className="mt-3"
-                onClick={() => openSheet({ type: "schedule", photoIds: ids, caption: finalCaption, suggested: bestTime })}
-              >
-                {t("useThisTime")}
-              </Btn>
             </div>
           </Card>
 
@@ -305,88 +296,6 @@ function Composer({ photos }: { photos: Photo[] }) {
         </div>
       </div>
     </div>
-  );
-}
-
-/* ---------- Instagram-style preview ---------- */
-
-function PostPreview({ photos, caption, captionLang }: { photos: Photo[]; caption: string; captionLang: Lang }) {
-  const { l } = useT();
-  const account = useAccount();
-  const [index, setIndex] = useState(0);
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <article className="overflow-hidden border-y bg-background lg:rounded-2xl lg:border">
-      <header className="flex items-center gap-2.5 px-3 py-2.5">
-        <Avatar src={account.avatar} alt={account.handle} size={32} />
-        <div className="min-w-0 leading-tight">
-          <p className="truncate text-[13px] font-semibold" dir="ltr">
-            {account.handle}
-          </p>
-          <p className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
-            <MapPin className="size-3" />
-            {l(account.location)}
-          </p>
-        </div>
-      </header>
-      <div className="relative">
-        <div
-          className="no-scrollbar flex aspect-square snap-x snap-mandatory overflow-x-auto bg-muted"
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            setIndex(Math.round(Math.abs(el.scrollLeft) / el.clientWidth));
-          }}
-        >
-          {photos.map((p, i) => (
-            <div key={p.id} className="relative aspect-square w-full shrink-0 snap-center">
-              <Image src={p.src} alt={l(p.dish)} fill sizes="(min-width: 1024px) 420px, 100vw" priority={i === 0} className="object-cover" />
-            </div>
-          ))}
-        </div>
-        {photos.length > 1 && (
-          <span className="absolute end-3 top-3 rounded-full bg-black/60 px-2 py-0.5 text-xs font-medium text-white">
-            {index + 1}/{photos.length}
-          </span>
-        )}
-      </div>
-      <div className="flex items-center gap-4 px-3 pt-2.5 [&_svg]:size-6">
-        <Heart strokeWidth={1.8} />
-        <MessageCircle strokeWidth={1.8} className="-scale-x-100" />
-        <Send strokeWidth={1.8} />
-        {photos.length > 1 && (
-          <div className="flex flex-1 justify-center gap-1">
-            {photos.map((p, i) => (
-              <span key={p.id} className={cn("size-1.5 rounded-full", i === index ? "bg-brand" : "bg-foreground/20")} />
-            ))}
-          </div>
-        )}
-        <Bookmark strokeWidth={1.8} className="ms-auto" />
-      </div>
-      <div className="px-3 pt-2 pb-3 text-[14px] leading-snug" dir={captionLang === "ar" ? "rtl" : "ltr"} lang={captionLang}>
-        <p className={cn("whitespace-pre-line", !expanded && "line-clamp-3")}>
-          <bdi className="font-semibold">{account.handle}</bdi> <CaptionText text={caption} />
-        </p>
-        {!expanded && caption.length > 110 && (
-          <button type="button" onClick={() => setExpanded(true)} className="text-muted-foreground">
-            {captionLang === "ar" ? "المزيد" : "more"}
-          </button>
-        )}
-      </div>
-    </article>
-  );
-}
-
-/** Hashtags in the brand ink color, like links in a real post. */
-function CaptionText({ text }: { text: string }): ReactNode {
-  return text.split(/(\s+)/).map((part, i) =>
-    part.startsWith("#") ? (
-      <span key={i} className="text-brand-ink">
-        {part}
-      </span>
-    ) : (
-      part
-    ),
   );
 }
 

@@ -1,16 +1,19 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowUp, BarChart3, CalendarDays, Hash, ImageIcon, ImagePlus, Layers, MessageSquare, Package, Plus, Sparkles, SquarePen, Swords, Wand2, X } from "lucide-react";
+import { ArrowUp, BarChart3, Blend, CalendarDays, Hash, ImageIcon, ImagePlus, Layers, MessageSquare, Package, Plus, Sparkles, SquarePen, Swords, Wand2, X } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Chip, IconBtn } from "@/components/kit";
+import { PhotoImage } from "@/components/gallery/photo-image";
 import { daysFromNow } from "@/lib/format";
+import { useBackHandler } from "@/lib/back";
 import { useT } from "@/lib/hooks";
 import { translate, type MessageKey } from "@/lib/i18n";
 import { useActiveChat, useChats, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { suggestions, type ChatMode } from "@/mock/ai-chat";
+import { findCategory } from "@/mock/categories";
 import type { AiChat } from "@/mock/ai-studio";
 import type { L } from "@/mock/types";
 import { useAiEngine, useChatContext, type AiEngine } from "./engine";
@@ -32,6 +35,7 @@ function promptsFor(mode: ChatMode): Prompt[] {
   if (mode !== "post") return suggestions[mode].map((s) => ({ id: s.id, q: s.q, icon: mode === "analytics" ? BarChart3 : Swords }));
   return [
     { id: "x-photo", q: both("promptFromPhoto"), icon: ImagePlus },
+    { id: "x-combine", q: both("promptCombine"), icon: Blend },
     { id: "x-like", q: both("promptLikeThis"), icon: Wand2 },
     { id: "x-product", q: both("promptProduct"), icon: Package },
     { id: "x-directions", q: both("promptDirections"), icon: Layers },
@@ -47,34 +51,40 @@ function promptsFor(mode: ChatMode): Prompt[] {
 export function ChatView({ sidebar, historyOpen, onHistoryOpenChange }: { sidebar: boolean; historyOpen: boolean; onHistoryOpenChange: (open: boolean) => void }) {
   const ctx = useChatContext();
   const engine = useAiEngine(ctx);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // "combine" asks for 2–4 photos and fills in a combine prompt; "attach" is the plain "+".
+  const [picker, setPicker] = useState<"attach" | "combine" | null>(null);
   const composer = useStore((s) => s.composer);
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
       {sidebar && (
         <aside className="flex w-[260px] shrink-0 flex-col border-e">
-          <History onPick={() => {}} />
+          <History onPick={() => {}} showNew />
         </aside>
       )}
-      <Conversation engine={engine} onAttach={() => setPickerOpen(true)} />
+      <Conversation engine={engine} onAttach={(mode) => setPicker(mode)} />
       {!sidebar && <HistoryDrawer open={historyOpen} onClose={() => onHistoryOpenChange(false)} />}
       <PhotoPicker
-        open={pickerOpen}
-        initial={composer.photoIds}
-        onClose={() => setPickerOpen(false)}
+        open={picker !== null}
+        combine={picker === "combine"}
+        initial={picker === "combine" ? [] : composer.photoIds}
+        onClose={() => setPicker(null)}
         onAttach={(photoIds) => {
           const s = useStore.getState();
           s.setChatMode("post");
-          s.setComposer({ photoIds, text: s.composer.text || translate(s.lang, photoIds.length > 1 ? "photosPrompt" : "photoPrompt") });
-          setPickerOpen(false);
+          if (picker === "combine") {
+            const first = ctx.photos.find((p) => p.id === photoIds[0]);
+            const category = findCategory(ctx.account.id, first?.category);
+            s.setComposer({ photoIds, text: translate(s.lang, "combinePrompt", { category: category ? category.name[s.lang] : translate(s.lang, "myPost") }) });
+          } else s.setComposer({ photoIds, text: s.composer.text || translate(s.lang, photoIds.length > 1 ? "photosPrompt" : "photoPrompt") });
+          setPicker(null);
         }}
       />
     </div>
   );
 }
 
-function Conversation({ engine, onAttach }: { engine: AiEngine; onAttach: () => void }) {
+function Conversation({ engine, onAttach }: { engine: AiEngine; onAttach: (mode: "attach" | "combine") => void }) {
   const { t, l } = useT();
   const ctx = useChatContext();
   const chat = useActiveChat();
@@ -115,7 +125,7 @@ function Conversation({ engine, onAttach }: { engine: AiEngine; onAttach: () => 
   }, [messages.length]);
 
   const runPrompt = (p: Prompt) => {
-    if (engine.prompt(p.id, p.q) === "attach") onAttach();
+    if (engine.prompt(p.id, p.q) === "attach") onAttach(p.id === "x-combine" ? "combine" : "attach");
   };
 
   return (
@@ -177,7 +187,7 @@ function Conversation({ engine, onAttach }: { engine: AiEngine; onAttach: () => 
               ))}
             </div>
           )}
-          <Composer busy={busy} onSend={engine.send} onAttach={onAttach} />
+          <Composer busy={busy} onSend={engine.send} onAttach={() => onAttach("attach")} />
         </div>
       </div>
     </div>
@@ -243,7 +253,7 @@ function Composer({ busy, onSend, onAttach }: { busy: boolean; onSend: () => voi
           {attached.map((p) => (
             <span key={p.id} className="relative size-16 shrink-0">
               <span className="relative block size-full overflow-hidden rounded-xl bg-muted">
-                <Image src={p.thumb} alt={l(p.dish)} fill sizes="64px" className="object-cover" />
+                <PhotoImage photo={p} alt={l(p.dish)} sizes="64px" />
               </span>
               <button
                 type="button"
@@ -292,7 +302,7 @@ function Composer({ busy, onSend, onAttach }: { busy: boolean; onSend: () => voi
 
 /* ---------- Past chats ---------- */
 
-function History({ onPick }: { onPick: () => void }) {
+function History({ onPick, showNew }: { onPick: () => void; showNew: boolean }) {
   const { t, l } = useT();
   const chats = useChats();
   const activeId = useStore((s) => s.activeChatId);
@@ -312,7 +322,7 @@ function History({ onPick }: { onPick: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="p-2">
+      <div className={cn("p-2", !showNew && "hidden")}>
         <button
           type="button"
           onClick={() => {
@@ -366,6 +376,7 @@ function History({ onPick }: { onPick: () => void }) {
 function HistoryDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t, dir } = useT();
   const side = dir === "rtl" ? "100%" : "-100%";
+  useBackHandler(open, onClose);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && (e.stopPropagation(), onClose());
@@ -392,7 +403,7 @@ function HistoryDrawer({ open, onClose }: { open: boolean; onClose: () => void }
                 <X />
               </IconBtn>
             </div>
-            <History onPick={onClose} />
+            <History onPick={onClose} showNew={false} />
           </motion.div>
         </div>
       )}

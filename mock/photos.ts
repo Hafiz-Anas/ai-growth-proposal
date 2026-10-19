@@ -1,4 +1,5 @@
-import { accounts, cameraRollFiles, dishes } from "./accounts";
+import { accounts, cameraRollFiles } from "./accounts";
+import { captionFor, categoryAlbumId, dishes, hashtagsFor, withTags } from "./categories";
 import { NOW, ago, kuwaitAt } from "./clock";
 import { photoSources } from "./photo-sources";
 import type { AccountId, Photo, PhotoSource, PhotoStatus, PostType } from "./types";
@@ -57,26 +58,29 @@ function buildPhotos(accountId: AccountId): Photo[] {
     if (SCHEDULED.includes(i)) [status, source] = ["scheduled", "upload"];
     if (AI.includes(i)) [status, source] = ["none", "ai"];
 
+    const { c, ...dish } = dishes[accountId][n - 1];
     const photo: Photo = {
       id: `${accountId}-${file}`,
       accountId,
       src: `/photos/${accountId}/${file}.jpg`,
       thumb: `/photos/${accountId}/${file}-t.jpg`,
-      dish: dishes[accountId][n - 1],
+      dish,
+      category: c,
       takenAt,
       status,
       source,
       favorite: FAVORITES.includes(i),
-      albums: [],
+      albums: [categoryAlbumId(c)],
       credit: { author: src.author, link: src.link },
     };
+    if (source === "ai") photo.look = (AI.indexOf(i) % 3) + 1;
 
     if (status === "scheduled") {
       const [d, h, m] = SCHEDULE_SLOTS[SCHEDULED.indexOf(i)];
       photo.scheduledFor = kuwaitAt(d, h, m);
-      photo.caption = fill(account.captions.base, photo);
+      photo.caption = fill(account, photo, "base");
     }
-    if (status === "draft") photo.caption = fill(account.captions.friendly, photo);
+    if (status === "draft") photo.caption = fill(account, photo, "friendly");
 
     if (status === "published") {
       const postType: PostType = rand() < 0.3 ? "reel" : rand() < 0.5 ? "carousel" : "photo";
@@ -93,25 +97,27 @@ function buildPhotos(accountId: AccountId): Photo[] {
       photo.postType = postType;
       photo.promoted = promoted;
       photo.metrics = { likes, comments, reach, saves, shares, reachByDay: decay.map((d) => Math.round(reach * d)) };
-      photo.caption = fill(account.captions.base, photo);
+      photo.caption = fill(account, photo, "base");
     }
     return photo;
   });
 }
 
-function fill(template: { en: string; ar: string }, photo: Pick<Photo, "dish">) {
-  return { en: template.en.replace("{dish}", photo.dish.en), ar: template.ar.replace("{dish}", photo.dish.ar) };
-}
+/** A seeded post's caption: the category's template for the dish, plus its hashtags. */
+const fill = (account: (typeof accounts)[number], photo: Photo, tone: "base" | "friendly") =>
+  withTags(captionFor(account, photo, tone), hashtagsFor(account, photo.category));
 
 /** The mock "camera roll" shown in the upload picker. */
 export function cameraRoll(accountId: AccountId) {
   return cameraRollFiles[accountId].map((n) => {
     const file = String(n).padStart(2, "0");
+    const { c, ...dish } = dishes[accountId][n - 1];
     return {
       file,
       src: `/photos/${accountId}/${file}.jpg`,
       thumb: `/photos/${accountId}/${file}-t.jpg`,
-      dish: dishes[accountId][n - 1],
+      dish,
+      category: c,
       credit: { author: photoSources[accountId][n - 1].author, link: photoSources[accountId][n - 1].link },
     };
   });

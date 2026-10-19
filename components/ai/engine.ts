@@ -10,16 +10,23 @@ import {
   DIRECTION_LABEL,
   PHOTO_STEPS,
   STYLE_LABEL,
+  VARIANT_STEPS,
+  combineCategory,
+  combineDirections,
+  combineFeatures,
   directions,
   findSource,
   inspiredPost,
   photoPost,
+  postWithVariants,
   productPhotos,
   productsFor,
+  recognise,
   unposted,
   type AiMsg,
   type Product,
 } from "@/mock/ai-studio";
+import { findCategory } from "@/mock/categories";
 import { ownComparison } from "@/mock/competitors";
 import type { AccountId, L, Lang } from "@/mock/types";
 
@@ -65,13 +72,42 @@ export function useAiEngine(ctx: ChatContext) {
 
   const userMsg = (text: L, extra?: { photoIds?: string[]; refThumb?: string }): AiMsg => ({ id: id(), role: "user", text, ...extra });
 
+  /** "This looks like kunafa from your Sweets album." followed by the next line of the reply. */
+  const seen = (photoIds: string[], next: MessageKey): L => {
+    const recognised = recognise(ctx, photoIds.map((pid) => ctx.photos.find((p) => p.id === pid)).filter((p) => p !== undefined));
+    return { en: `${recognised.en} ${translate("en", next)}`, ar: `${recognised.ar} ${translate("ar", next)}` };
+  };
+
   const postFromPhotos = (photoIds: string[], text: L, wantsOptions = false) => {
     s().setChatMode("post");
-    exchange(userMsg(text, { photoIds }), () =>
-      wantsOptions
-        ? { id: id(), role: "ai", kind: "directions", steps: [{ key: "look" }, { key: "directions" }], ready: false, text: both("directionsIntro"), options: directions(ctx, photoIds) }
-        : { id: id(), role: "ai", kind: "post", steps: PHOTO_STEPS, ready: false, text: both("postReady"), post: photoPost(ctx, photoIds) },
-    );
+    exchange(userMsg(text, { photoIds }), () => {
+      if (wantsOptions)
+        return { id: id(), role: "ai", kind: "directions", steps: [{ key: "look" }, { key: "directions" }], ready: false, text: seen(photoIds, "directionsIntro"), options: directions(ctx, photoIds) };
+      const post = postWithVariants(ctx, photoPost(ctx, photoIds));
+      return { id: id(), role: "ai", kind: "post", steps: post.variants ? VARIANT_STEPS : PHOTO_STEPS, ready: false, text: seen(photoIds, post.variants ? "postReadyVariants" : "postReady"), post };
+    });
+  };
+
+  /** 2–4 photos: take one feature from each, then offer directions on a new AI image that mixes them. */
+  const combine = (photoIds: string[], text: L, prompt: string) => {
+    s().setChatMode("post");
+    const ids = photoIds.slice(0, 4);
+    const photos = ids.map((pid) => ctx.photos.find((p) => p.id === pid)).filter((p) => p !== undefined);
+    const features = combineFeatures(ids, prompt);
+    const category = findCategory(ctx.account.id, combineCategory(ctx, photos, prompt));
+    exchange(userMsg(text, { photoIds: ids }), () => ({
+      id: id(),
+      role: "ai",
+      kind: "directions",
+      steps: [{ key: "look" }, { key: "combine" }, { key: "directions" }],
+      ready: false,
+      features,
+      text: {
+        en: `${translate("en", "combineIntro", { category: category?.name.en ?? "" })}${photoIds.length > 4 ? ` ${translate("en", "combineMax")}` : ""}`,
+        ar: `${translate("ar", "combineIntro", { category: category?.name.ar ?? "" })}${photoIds.length > 4 ? ` ${translate("ar", "combineMax")}` : ""}`,
+      },
+      options: combineDirections(ctx, photos, category?.id),
+    }));
   };
 
   const nextPost = (text: L) => {
@@ -145,6 +181,7 @@ export function useAiEngine(ctx: ChatContext) {
       s().setComposer({ text: "", photoIds: [] });
       const text = q ? same(q) : both(composer.photoIds.length > 1 ? "photosPrompt" : "photoPrompt");
       const lower = q.toLowerCase();
+      if (composer.photoIds.length > 1 && /combin|mix|merge|blend|دمج|ادمج|اجمع|امزج|مزج/.test(lower)) return combine(composer.photoIds, text, q);
       if (composer.photoIds.length) return postFromPhotos(composer.photoIds, text, /direction|option|idea|اتجاه|خيار|أفكار/.test(lower));
       if (chatMode === "post") {
         const product = productsFor(ctx.account.id).find((p) => lower.includes(p.name.en.toLowerCase()) || q.includes(p.name.ar));
@@ -159,7 +196,7 @@ export function useAiEngine(ctx: ChatContext) {
     /** Suggested prompts. Returns "attach" when the photo picker should open instead. */
     prompt(promptId: string, text: L): "attach" | void {
       if (typing) return;
-      if (promptId === "x-photo") return "attach";
+      if (promptId === "x-photo" || promptId === "x-combine") return "attach";
       if (promptId === "x-like") return askInspiration(text);
       if (promptId === "x-product") return askProduct(text);
       if (promptId === "x-directions") return directionsForNext(text);
@@ -201,14 +238,17 @@ export function useAiEngine(ctx: ChatContext) {
       const option = msg.options[index];
       s().updateAiMsg(msgId, { chosen: index });
       const label = DIRECTION_LABEL[option.direction ?? "warm"];
+      // A combined AI image joins the gallery (AI Generated + its category album) once its direction is picked.
+      const { aiImage, ...rest } = option;
+      const post = aiImage ? { ...rest, photoIds: [s().addAiImage(aiImage)] } : postWithVariants(ctx, { ...rest });
       exchange(userMsg(both("goWith", (lang) => ({ name: label[lang] }))), () => ({
         id: id(),
         role: "ai",
         kind: "post",
-        steps: [{ key: "hashtags" }, { key: "time" }],
+        steps: post.variants ? [{ key: "hashtags" }, { key: "images" }, { key: "time" }] : [{ key: "hashtags" }, { key: "time" }],
         ready: false,
-        text: both("postReady"),
-        post: { ...option },
+        text: both(aiImage ? "postReadyCombined" : post.variants ? "postReadyVariants" : "postReady"),
+        post,
       }));
     },
   };

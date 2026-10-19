@@ -1,37 +1,63 @@
 "use client";
 
-import { CalendarClock, Check, CircleCheck, Heart, PencilLine, Sparkles } from "lucide-react";
-import Image from "next/image";
+import { Check, Heart, MessageSquareText, Sparkles, User } from "lucide-react";
 import { memo } from "react";
 import { useT } from "@/lib/hooks";
 import { cn } from "@/lib/utils";
 import type { Photo } from "@/mock/types";
+import { PhotoImage, isPost } from "./photo-image";
 
-export const StatusBadge = memo(function StatusBadge({ photo, className }: { photo: Photo; className?: string }) {
+/** Where the photo came from: made by the AI, or uploaded by the user. `labeled` spells it out (viewer). */
+export const SourceBadge = memo(function SourceBadge({ photo, labeled, className }: { photo: Photo; labeled?: boolean; className?: string }) {
   const { t } = useT();
-  const badge =
-    photo.status === "published"
-      ? { icon: CircleCheck, label: t("published") }
-      : photo.status === "scheduled"
-        ? { icon: CalendarClock, label: t("scheduled") }
-        : photo.status === "draft"
-          ? { icon: PencilLine, label: t("draft") }
-          : photo.source === "ai"
-            ? { icon: Sparkles, label: t("ai") }
-            : null;
-  if (!badge) return null;
-  const Icon = badge.icon;
+  const ai = photo.source === "ai";
+  const label = ai ? t("madeByAi") : t("uploadedByYou");
+  if (labeled)
+    return (
+      <span
+        className={cn(
+          "inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12px] font-semibold text-white backdrop-blur-md",
+          ai ? "bg-brand/90" : "bg-black/50",
+          className,
+        )}
+      >
+        {ai ? <Sparkles className="size-3.5" aria-hidden /> : <User className="size-3.5" aria-hidden />}
+        {label}
+      </span>
+    );
   return (
     <span
-      title={badge.label}
+      title={label}
+      className={cn(
+        "inline-flex h-[18px] items-center gap-0.5 rounded-full text-[10px] leading-none font-bold text-white backdrop-blur-sm",
+        ai ? "bg-brand/90 px-1.5" : "w-[18px] justify-center bg-black/45",
+        className,
+      )}
+    >
+      {ai ? <Sparkles className="size-2.5" strokeWidth={2.6} aria-hidden /> : <User className="size-2.5" strokeWidth={2.6} aria-hidden />}
+      {ai && <span aria-hidden>{t("aiShort")}</span>}
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+});
+
+/** Ready posts (photo + caption) get a small caption icon; plain photos get none. */
+export const PostBadge = memo(function PostBadge({ photo, className }: { photo: Photo; className?: string }) {
+  const { t } = useT();
+  if (!isPost(photo)) return null;
+  const status = photo.status === "published" ? t("published") : photo.status === "scheduled" ? t("scheduled") : t("savedPost");
+  const label = `${t("readyPost")} · ${status}`;
+  return (
+    <span
+      title={label}
       className={cn(
         "grid size-[22px] place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm",
         photo.status === "scheduled" && "bg-brand/90",
         className,
       )}
     >
-      <Icon className="size-3.5" strokeWidth={2.4} aria-hidden />
-      <span className="sr-only">{badge.label}</span>
+      <MessageSquareText className="size-3.5" strokeWidth={2.4} aria-hidden />
+      <span className="sr-only">{label}</span>
     </span>
   );
 });
@@ -60,15 +86,12 @@ export const PhotoTile = memo(function PhotoTile({
       aria-label={l(photo.dish)}
       className="group relative aspect-square overflow-hidden bg-muted outline-offset-[-2px] focus-visible:rounded-none focus-visible:outline-[3px]"
     >
-      <Image
-        src={photo.thumb}
-        alt=""
-        fill
-        sizes="(min-width: 1024px) 180px, 33vw"
-        priority={priority}
-        className={cn("object-cover transition-[transform,opacity] duration-200", selected && "scale-[0.94] rounded-sm opacity-80")}
-      />
-      <StatusBadge photo={photo} className="absolute end-1.5 top-1.5" />
+      {/* The selected shrink sits on a wrapper so it never fights the image's own AI look. */}
+      <span className={cn("absolute inset-0 overflow-hidden transition-[transform,opacity] duration-200", selected && "scale-[0.94] rounded-sm opacity-80")}>
+        <PhotoImage photo={photo} sizes="(min-width: 1024px) 180px, 33vw" priority={priority} />
+      </span>
+      <SourceBadge photo={photo} className="absolute start-1.5 top-1.5" />
+      <PostBadge photo={photo} className="absolute end-1.5 top-1.5" />
       {photo.favorite && !selecting && (
         <Heart className="absolute start-1.5 bottom-1.5 size-4 fill-white text-white drop-shadow" aria-hidden />
       )}

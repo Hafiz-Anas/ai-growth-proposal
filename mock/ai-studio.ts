@@ -2,6 +2,7 @@
 // Nothing is sent to any AI service; every caption comes from the templates below.
 import { suggestedTime } from "@/lib/suggest";
 import type { ChatMode } from "./ai-chat";
+import { captionFor as categoryCaption, categoriesFor, findCategory, hashtagsFor as categoryTags } from "./categories";
 import { NOW, ago } from "./clock";
 import type { Account, AccountId, CaptionTone, Competitor, Insights, L, Photo } from "./types";
 
@@ -9,10 +10,32 @@ import type { Account, AccountId, CaptionTone, Competitor, Insights, L, Photo } 
 
 export type Direction = "warm" | "promo" | "minimal";
 export type InspoStyle = "question" | "story" | "list";
-export type PostStatus = "new" | "scheduled" | "posted" | "draft";
+export type PostStatus = "new" | "scheduled" | "posted" | "draft" | "saved";
+
+/** A mock AI image: an existing photo of the same category, shown with its own look. */
+export interface AiImage {
+  src: string;
+  thumb: string;
+  look: number;
+  dish: L;
+  category?: string;
+  credit: { author: string; link: string };
+}
+
+/** One of the AI images offered for a post; `photoId` is set once it's picked and saved to the gallery. */
+export interface Variant extends AiImage {
+  photoId?: string;
+}
 
 export interface PostDraft {
   photoIds: string[];
+  /** AI images similar to the user's photo; the user picks one or keeps the original. */
+  variants?: Variant[];
+  /** Picked variant; undefined keeps the original photo. */
+  variant?: number;
+  originalId?: string;
+  /** A combined AI image not yet in the gallery (combine directions). Saved when the direction is chosen. */
+  aiImage?: AiImage;
   caption: L;
   hashtags: string[];
   time: string; // ISO
@@ -23,7 +46,14 @@ export interface PostDraft {
   edited?: boolean;
 }
 
-export type StepKey = "look" | "style" | "product" | "caption" | "hashtags" | "time" | "directions";
+export type StepKey = "look" | "style" | "product" | "caption" | "hashtags" | "time" | "directions" | "images" | "combine";
+
+export type FeatureKey = "angle" | "colors" | "lighting" | "plating" | "background";
+/** What the AI took from one photo when combining. */
+export interface Feature {
+  photoId: string;
+  key: FeatureKey;
+}
 export interface Step {
   key: StepKey;
   /** A handle or product name shown in the step label. */
@@ -35,7 +65,7 @@ export type AiMsg =
   | { id: string; role: "ai"; kind: "answer"; answerId: string }
   | { id: string; role: "ai"; kind: "text"; text: L }
   | { id: string; role: "ai"; kind: "post"; text?: L; steps: Step[]; ready: boolean; post: PostDraft }
-  | { id: string; role: "ai"; kind: "directions"; text?: L; steps: Step[]; ready: boolean; options: PostDraft[]; chosen?: number }
+  | { id: string; role: "ai"; kind: "directions"; text?: L; steps: Step[]; ready: boolean; options: PostDraft[]; chosen?: number; features?: Feature[] }
   | { id: string; role: "ai"; kind: "pickInspiration"; chosen?: string }
   | { id: string; role: "ai"; kind: "pickProduct"; chosen?: string };
 
@@ -133,22 +163,25 @@ export const STYLE_LABEL: Record<InspoStyle, L> = {
   list: { en: "a quick numbered list", ar: "قائمة قصيرة مرقّمة" },
 };
 
+type Subject = Pick<Photo, "dish" | "category">;
+
 const fillWith = (template: L, photo: Pick<Photo, "dish">, brand: Brand): L => ({
   en: template.en.replaceAll("{dish}", photo.dish.en).replaceAll("{offer}", brand.offer.en).replaceAll("{cta}", brand.cta.en),
   ar: template.ar.replaceAll("{dish}", photo.dish.ar).replaceAll("{offer}", brand.offer.ar).replaceAll("{cta}", brand.cta.ar),
 });
 
-function captionFor(ctx: StudioContext, photo: Photo, tone: PostDraft["tone"]): L {
+/** Captions follow the photo's category (a sweets photo gets a sweets caption), in the chosen tone. */
+function captionFor(ctx: StudioContext, photo: Subject, tone: PostDraft["tone"]): L {
   const brand = brandFor(ctx.account.id);
-  if (tone === "warm") return fillWith(ctx.account.captions.friendly, photo, brand);
-  if (tone === "minimal") return fillWith(ctx.account.captions.shorter, photo, brand);
+  if (tone === "warm") return categoryCaption(ctx.account, photo, "friendly");
+  if (tone === "minimal") return categoryCaption(ctx.account, photo, "shorter");
   if (tone === "promo") return fillWith(PROMO, photo, brand);
   if (tone in STYLES) return fillWith(STYLES[tone as InspoStyle], photo, brand);
-  return fillWith(ctx.account.captions[tone as CaptionTone], photo, brand);
+  return categoryCaption(ctx.account, photo, tone as CaptionTone);
 }
 
-function hashtagsFor(ctx: StudioContext, tone: PostDraft["tone"]) {
-  const tags = ctx.account.hashtags;
+function hashtagsFor(ctx: StudioContext, tone: PostDraft["tone"], photo: Subject) {
+  const tags = categoryTags(ctx.account, photo.category);
   if (tone === "minimal" || tone === "shorter") return tags.slice(0, 3);
   if (tone === "promo") return tags.slice(1, 6);
   return tags.slice(0, 5);
@@ -162,9 +195,9 @@ export const fullCaption = (post: PostDraft): L => ({
 
 /* ---------- Generators ---------- */
 
-function draft(ctx: StudioContext, photoIds: string[], tone: PostDraft["tone"], extra?: Partial<PostDraft>): PostDraft {
-  const photo = ctx.photos.find((p) => p.id === photoIds[0]) ?? ctx.photos[0];
-  return { photoIds, caption: captionFor(ctx, photo, tone), hashtags: hashtagsFor(ctx, tone), time: suggestedTime(ctx.insights), tone, status: "new", ...extra };
+function draft(ctx: StudioContext, photoIds: string[], tone: PostDraft["tone"], extra?: Partial<PostDraft>, subject?: Subject): PostDraft {
+  const photo = subject ?? ctx.photos.find((p) => p.id === photoIds[0]) ?? ctx.photos[0];
+  return { photoIds, caption: captionFor(ctx, photo, tone), hashtags: hashtagsFor(ctx, tone, photo), time: suggestedTime(ctx.insights), tone, status: "new", ...extra };
 }
 
 /** Rewrite a post's caption in another tone, keeping everything else. */
@@ -184,6 +217,131 @@ export function photoPost(ctx: StudioContext, photoIds: string[]): PostDraft {
 }
 
 export const PHOTO_STEPS: Step[] = [{ key: "look" }, { key: "caption" }, { key: "hashtags" }, { key: "time" }];
+export const VARIANT_STEPS: Step[] = [{ key: "look" }, { key: "caption" }, { key: "hashtags" }, { key: "images" }, { key: "time" }];
+
+/* ---------- Recognising photos ---------- */
+
+const words = (s: string) => s.toLowerCase().split(/[^a-z']+/).filter((w) => w.length > 3);
+
+const categoryLabel = (ctx: StudioContext, photo: Photo): L | undefined => findCategory(ctx.account.id, photo.category)?.name;
+
+/** "This looks like kunafa from your Sweets album." Built from each photo's name and category. */
+export function recognise(ctx: StudioContext, photos: Photo[]): L {
+  const known = photos.filter((p) => p.category);
+  if (known.length === 0)
+    return {
+      en: "I couldn't tell what's in this photo, so I kept the post general. Add it to a category album and I'll match the next one.",
+      ar: "لم أتعرّف على محتوى الصورة، فكتبت منشوراً عاماً. أضفها إلى ألبوم فئة وسأطابق المنشور القادم.",
+    };
+  const names = (lang: "en" | "ar") => {
+    const list = [...new Set(known.map((p) => (lang === "en" ? p.dish.en.toLowerCase() : p.dish.ar)))];
+    const and = lang === "en" ? " and " : " و";
+    return list.length > 1 ? `${list.slice(0, -1).join(lang === "en" ? ", " : "، ")}${and}${list[list.length - 1]}` : list[0];
+  };
+  const cats = [...new Set(known.map((p) => p.category))];
+  const many = photos.length > 1;
+  if (cats.length === 1) {
+    const label = categoryLabel(ctx, known[0])!;
+    return {
+      en: `${many ? "These look like" : "This looks like"} ${names("en")} from your ${label.en} album.`,
+      ar: `${many ? "تبدو هذه الصور" : "تبدو هذه"} ${names("ar")} من ألبوم ${label.ar}.`,
+    };
+  }
+  const labels = cats.map((c) => categoryLabel(ctx, known.find((p) => p.category === c)!)!);
+  return {
+    en: `These look like ${names("en")}, from your ${labels.map((x) => x.en).join(" and ")} albums.`,
+    ar: `تبدو هذه الصور ${names("ar")}، من ألبومات ${labels.map((x) => x.ar).join(" و")}.`,
+  };
+}
+
+/** 3 AI images like the photo: the same shot restyled, then the closest photos of the same item or category. */
+export function similarImages(ctx: StudioContext, photo: Photo): Variant[] {
+  if (!photo.category) return [];
+  const own = new Set(words(photo.dish.en));
+  const score = (p: Photo) => words(p.dish.en).filter((w) => own.has(w)).length;
+  const pool = ctx.photos
+    .filter((p) => p.category === photo.category && p.id !== photo.id && p.source !== "ai" && p.src !== photo.src)
+    .map((p, i) => ({ p, s: score(p), i }))
+    .sort((a, b) => b.s - a.s || a.i - b.i)
+    .map((x) => x.p);
+  const bases = [photo, ...pool].slice(0, 3);
+  // Each image keeps the name of what it shows, so a picked one is saved (and captioned) as that item.
+  return bases.map((b, i) => ({ src: b.src, thumb: b.thumb, look: [1, 2, 3][i], dish: b.dish, category: photo.category, credit: b.credit }));
+}
+
+/** The caption rewritten for another photo of the post (a picked AI image), in the same tone. */
+export function recaption(ctx: StudioContext, post: PostDraft, subject: Subject): PostDraft {
+  return { ...post, caption: captionFor(ctx, subject, post.tone) };
+}
+
+/** A photo post plus AI images to pick from (single photo, or the cover of a carousel). */
+export function postWithVariants(ctx: StudioContext, base: PostDraft): PostDraft {
+  const photo = ctx.photos.find((p) => p.id === base.photoIds[0]);
+  if (!photo || photo.source === "ai") return base;
+  const variants = similarImages(ctx, photo);
+  return variants.length ? { ...base, variants, originalId: photo.id } : base;
+}
+
+/* ---------- Combining photos ---------- */
+
+export const FEATURE_LABEL: Record<FeatureKey, L> = {
+  angle: { en: "Camera angle", ar: "زاوية التصوير" },
+  colors: { en: "Colors", ar: "الألوان" },
+  lighting: { en: "Lighting", ar: "الإضاءة" },
+  plating: { en: "Plating", ar: "طريقة التقديم" },
+  background: { en: "Background", ar: "الخلفية" },
+};
+
+const FEATURE_WORDS: [FeatureKey, RegExp][] = [
+  ["angle", /angle|top.?down|overhead|زاوي/i],
+  ["colors", /colou?r|tone|palette|لون|ألوان/i],
+  ["lighting", /light|إضاء|ضوء/i],
+  ["plating", /plat|present|arrang|تقديم|ترتيب/i],
+  ["background", /background|backdrop|table|خلفي/i],
+];
+
+/** Features in the order the user asked for them, then the usual ones, one per photo. */
+export function combineFeatures(photoIds: string[], text: string): Feature[] {
+  const asked = FEATURE_WORDS.map(([key, re]) => ({ key, at: text.search(re) }))
+    .filter((x) => x.at >= 0)
+    .sort((a, b) => a.at - b.at)
+    .map((x) => x.key);
+  const order = [...new Set<FeatureKey>([...asked, "angle", "colors", "lighting", "plating"])];
+  return photoIds.map((photoId, i) => ({ photoId, key: order[i] }));
+}
+
+/** The category the user named ("for my Sweets category"), else the most common one in the photos. */
+export function combineCategory(ctx: StudioContext, photos: Photo[], text: string) {
+  const named = categoryInText(ctx.account.id, text);
+  if (named) return named;
+  const counts = new Map<string, number>();
+  for (const p of photos) if (p.category) counts.set(p.category, (counts.get(p.category) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+const GENERIC = new Set(["dishes", "coffee", "family", "our"]);
+
+/** A category named in the prompt, in English (whole words, singular or plural) or Arabic. */
+function categoryInText(accountId: string, text: string) {
+  const lower = text.toLowerCase();
+  return categoriesFor(accountId).find((c) => {
+    const names = [c.id, ...c.name.en.toLowerCase().split(/[^a-zé]+/)].filter((w) => w.length > 2 && !GENERIC.has(w));
+    const en = names.some((w) => new RegExp(`\\b${w.replace(/s$/, "")}s?\\b`).test(lower));
+    return en || text.includes(c.name.ar) || text.includes(c.name.ar.replace(/^ال/, ""));
+  })?.id;
+}
+
+/** 3 directions, each on a new AI image that mixes the photos (shown with its own look until it's picked). */
+export function combineDirections(ctx: StudioContext, photos: Photo[], category: string | undefined): PostDraft[] {
+  const subjectPhoto = photos.find((p) => p.category === category) ?? photos[0];
+  const subject: Subject = { dish: subjectPhoto.dish, category: category ?? subjectPhoto.category };
+  // The new image builds on the photo from the asked-for category, so a Sweets post never shows another dish.
+  const base = subjectPhoto;
+  const order: Direction[] = ["warm", "promo", "minimal"];
+  return order.map((d, i) =>
+    draft(ctx, [base.id], d, { direction: d, aiImage: { src: base.src, thumb: base.thumb, look: [2, 3, 1][i], dish: subject.dish, category: subject.category, credit: base.credit } }, subject),
+  );
+}
 
 /** 3 directions (warm, promotional, minimal), each on its own photo when there are enough. */
 export function directions(ctx: StudioContext, photoIds: string[]): PostDraft[] {

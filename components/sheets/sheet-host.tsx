@@ -5,7 +5,7 @@ import { AccountsSheet, AddAccountSheet, EditProfileSheet } from "./account-shee
 import { AddCompetitorSheet, CompetitorSheet } from "./competitor-sheets";
 import { HelpSheet, LogoutSheet, PlanSheet, ReportSheet } from "./misc-sheets";
 import { NotificationsSheet } from "./notifications-sheet";
-import { AlbumSheet, PerformanceSheet, ScheduleSheet, UploadSheet } from "./photo-sheets";
+import { AlbumNameSheet, AlbumSheet, PerformanceSheet, PostSheet, ScheduleSheet, UploadSheet } from "./photo-sheets";
 
 /** Every sheet lives here; which one is open comes from the store. */
 export function SheetHost() {
@@ -18,6 +18,8 @@ export function SheetHost() {
       <AiChatSheet />
       <ScheduleSheet />
       <AlbumSheet />
+      <AlbumNameSheet />
+      <PostSheet />
       <UploadSheet />
       <PerformanceSheet />
       <AddCompetitorSheet />

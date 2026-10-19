@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronRight, CircleHelp, CreditCard, Globe, Info, Link2, LogOut, MessageSquare, Moon, Plus, RotateCcw, Sparkles, Users } from "lucide-react";
+import { Bell, ChevronRight, CircleHelp, CreditCard, Globe, Info, Link2, LogOut, Moon, Plus, RotateCcw, Sparkles, Users } from "lucide-react";
 import Image from "next/image";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
@@ -232,8 +232,7 @@ function Settings() {
       </Group>
 
       <Group title={t("help")}>
-        <Item icon={<CircleHelp />} label={t("helpCenter")} onClick={() => openSheet({ type: "help" })} />
-        <Item icon={<MessageSquare />} label={t("contactSupport")} onClick={() => toast.success(t("supportOpened"))} />
+        <Item icon={<CircleHelp />} label={t("helpCenter")} detail={t("contactSupport")} onClick={() => openSheet({ type: "help" })} />
       </Group>
 
       <Group title={t("aboutDemo")}>

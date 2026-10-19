@@ -1,12 +1,15 @@
 "use client";
 
-import { CalendarClock, Check, FolderPlus, Heart, ImageUp, Images, Sparkles } from "lucide-react";
+import { BarChart3, CalendarClock, Check, FolderPlus, ImageUp, Images, PencilLine, Send, Sparkles } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { BarChart } from "@/components/charts";
-import { Btn, Delta } from "@/components/kit";
+import { Btn, Delta, Segmented } from "@/components/kit";
+import { PhotoImage } from "@/components/gallery/photo-image";
+import { PostStatus } from "@/components/gallery/photo-viewer";
+import { PostPreview } from "@/components/gallery/post-preview";
 import { Sheet } from "@/components/sheet";
 import { compact, dayKey, num, time, when } from "@/lib/format";
 import { useInsights, useT } from "@/lib/hooks";
@@ -14,7 +17,7 @@ import { useAlbums, usePhotos, useStore } from "@/lib/store";
 import { alternativeTimes, suggestedTime } from "@/lib/suggest";
 import { cn } from "@/lib/utils";
 import { cameraRoll } from "@/mock/photos";
-import type { AccountId } from "@/mock/types";
+import type { AccountId, Lang } from "@/mock/types";
 import { useSheet } from "./use-sheet";
 
 /* ---------- Schedule ---------- */
@@ -23,6 +26,7 @@ export function ScheduleSheet() {
   const { open, data, close } = useSheet("schedule");
   const { t, lang } = useT();
   const router = useRouter();
+  const pathname = usePathname();
   const photos = usePhotos();
   const insights = useInsights();
   const suggested = data?.suggested ?? suggestedTime(insights);
@@ -40,7 +44,8 @@ export function ScheduleSheet() {
     toast.success(t("scheduledToast", { when: when(at, lang) }));
     close();
     setChoice("0");
-    if (data.caption) {
+    // Scheduling from the composer finishes the post and goes back to the Gallery.
+    if (pathname === "/create") {
       useStore.getState().setDraft({ photoIds: [] });
       router.push("/");
     }
@@ -62,7 +67,7 @@ export function ScheduleSheet() {
           <div className="no-scrollbar flex gap-1.5 overflow-x-auto">
             {chosen.map((p) => (
               <span key={p.id} className="relative size-16 shrink-0 overflow-hidden rounded-lg bg-muted">
-                <Image src={p.thumb} alt="" fill sizes="64px" className="object-cover" />
+                <PhotoImage photo={p} sizes="64px" />
               </span>
             ))}
           </div>
@@ -130,80 +135,136 @@ function Radio({ checked, onSelect, children }: { checked: boolean; onSelect: ()
   );
 }
 
-/* ---------- Add to album ---------- */
+/* ---------- Add to album / move ---------- */
 
 export function AlbumSheet() {
   const { open, data, close } = useSheet("album");
-  const { t } = useT();
+  const { t, l } = useT();
   const albums = useAlbums();
   const photos = usePhotos();
-  const [name, setName] = useState("");
+  const from = albums.find((a) => a.id === data?.fromAlbumId);
+  const [move, setMove] = useState(true);
+  const moving = !!from && move;
 
-  const add = (albumId: string, albumName: string) => {
+  const add = (albumId: string) => {
     if (!data) return;
-    useStore.getState().addToAlbum(data.photoIds, albumId);
-    toast.success(t("addedToAlbum", { album: albumName }));
+    const album = albums.find((a) => a.id === albumId);
+    useStore.getState().addToAlbum(data.photoIds, albumId, moving ? from?.id : undefined);
+    toast.success(t(moving ? "movedToAlbum" : "addedToAlbum", { album: album ? l(album.name) : "" }));
     close();
   };
 
   return (
-    <Sheet open={open} onClose={close} title={t("addToAlbum")}>
-      <div className="px-4 pb-5">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const n = name.trim();
-            if (!n) return;
-            const id = useStore.getState().createAlbum(n);
-            setName("");
-            add(id, n);
-          }}
-          className="mb-4 flex gap-2"
-        >
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={t("albumName")}
-            aria-label={t("albumName")}
-            className="h-11 min-w-0 flex-1 rounded-xl bg-muted px-3 text-[15px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <Sheet open={open} onClose={close} title={moving ? t("moveToAlbum") : t("addToAlbum")}>
+      <div className="space-y-4 px-4 pb-5">
+        {from && (
+          <Segmented
+            label={t("addOrMove")}
+            value={move ? "move" : "add"}
+            onChange={(v) => setMove(v === "move")}
+            options={[
+              { value: "move", label: t("moveOutOf", { album: l(from.name) }) },
+              { value: "add", label: t("alsoKeepHere") },
+            ]}
           />
-          <Btn type="submit" disabled={!name.trim()} icon={<FolderPlus />}>
-            {t("createAlbum")}
-          </Btn>
-        </form>
+        )}
         <div className="divide-y overflow-hidden rounded-2xl border">
+          {albums
+            .filter((a) => a.id !== from?.id)
+            .map((a) => {
+              const cover = photos.find((p) => p.albums.includes(a.id));
+              const inAll = !!data?.photoIds.length && data.photoIds.every((id) => photos.find((p) => p.id === id)?.albums.includes(a.id));
+              return (
+                <button key={a.id} type="button" onClick={() => add(a.id)} className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-muted/50">
+                  <span className="relative grid size-11 shrink-0 place-items-center overflow-hidden rounded-lg bg-muted">
+                    {cover ? <PhotoImage photo={cover} sizes="44px" /> : <Images className="size-5" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px]">{l(a.name)}</span>
+                    {a.category && <span className="block text-[12px] text-muted-foreground">{t("categoryAlbum")}</span>}
+                  </span>
+                  {inAll && <Check className="size-5 shrink-0 text-brand" aria-label={t("alreadyInAlbum")} />}
+                </button>
+              );
+            })}
           <button
             type="button"
-            className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-muted/50"
-            onClick={() => {
-              if (!data) return;
-              useStore.getState().toggleFavorite(data.photoIds, true);
-              toast.success(t("addedToFavorites"));
-              close();
-            }}
+            onClick={() => data && useStore.getState().openSheet({ type: "albumName", photoIds: data.photoIds })}
+            className="flex w-full items-center gap-3 px-3 py-2.5 text-start font-medium text-brand-ink hover:bg-muted/50"
           >
-            <span className="grid size-11 place-items-center rounded-lg bg-muted">
-              <Heart className="size-5" />
+            <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-brand-soft">
+              <FolderPlus className="size-5" />
             </span>
-            <span className="flex-1 text-[15px]">{t("favorites")}</span>
+            <span className="flex-1 text-[15px]">{t("newAlbum")}</span>
           </button>
-          {albums.map((a) => {
-            const cover = photos.find((p) => p.albums.includes(a.id));
-            return (
-              <button key={a.id} type="button" onClick={() => add(a.id, a.name)} className="flex w-full items-center gap-3 px-3 py-2.5 text-start hover:bg-muted/50">
-                <span className="relative grid size-11 place-items-center overflow-hidden rounded-lg bg-muted">
-                  {cover ? <Image src={cover.thumb} alt="" fill sizes="44px" className="object-cover" /> : <Images className="size-5" />}
-                </span>
-                <span className="flex-1 truncate text-[15px]">{a.name}</span>
-              </button>
-            );
-          })}
         </div>
       </div>
     </Sheet>
   );
 }
 
+/* ---------- New album / rename ---------- */
+
+export function AlbumNameSheet() {
+  const { open, data, close } = useSheet("albumName");
+  const { t, l } = useT();
+  const albums = useAlbums();
+  const album = albums.find((a) => a.id === data?.albumId);
+  const [name, setName] = useState("");
+  // Start from the album's current name each time the sheet opens.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setName(album ? l(album.name) : "");
+  }
+
+  const submit = () => {
+    const n = name.trim();
+    if (!n || !data) return;
+    const s = useStore.getState();
+    if (album) {
+      s.renameAlbum(album.id, n);
+      toast.success(t("albumRenamed"));
+    } else {
+      const id = s.createAlbum(n);
+      if (data.photoIds?.length) s.addToAlbum(data.photoIds, id);
+      toast.success(data.photoIds?.length ? t("addedToAlbum", { album: n }) : t("albumCreated", { album: n }));
+    }
+    close();
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onClose={close}
+      title={album ? t("renameAlbum") : t("newAlbum")}
+      footer={
+        <Btn size="lg" className="w-full" disabled={!name.trim()} onClick={submit}>
+          {album ? t("save") : t("createAlbum")}
+        </Btn>
+      }
+    >
+      <form
+        className="px-4 pb-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("albumName")}
+          aria-label={t("albumName")}
+          autoFocus
+          dir="auto"
+          className="h-12 w-full rounded-xl bg-muted px-3 text-[16px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        {album?.category && <p className="mt-2 text-[12.5px] text-muted-foreground">{t("categoryRenameNote")}</p>}
+      </form>
+    </Sheet>
+  );
+}
 /* ---------- Upload (mock file picker) ---------- */
 
 export function UploadSheet() {
@@ -223,7 +284,7 @@ export function UploadSheet() {
 
   const upload = () => {
     const items = roll.filter((r) => selected.includes(r.src));
-    useStore.getState().uploadPhotos(items.map(({ src, thumb, dish, credit }) => ({ src, thumb, dish, credit })));
+    useStore.getState().uploadPhotos(items.map(({ src, thumb, dish, credit, category }) => ({ src, thumb, dish, credit, category })));
     done(items.length);
   };
 
@@ -313,7 +374,7 @@ export function PerformanceSheet() {
         <div className="space-y-5 px-4 pb-6">
           <div className="flex items-center gap-3">
             <span className="relative size-16 shrink-0 overflow-hidden rounded-xl bg-muted">
-              <Image src={photo.thumb} alt="" fill sizes="64px" className="object-cover" />
+              <PhotoImage photo={photo} sizes="64px" />
             </span>
             <div className="min-w-0">
               <p className="truncate text-[16px] font-semibold">{l(photo.dish)}</p>
@@ -363,6 +424,124 @@ export function PerformanceSheet() {
           <p className="text-[11px] text-muted-foreground">
             {time(photo.publishedAt!, lang)} • {t("kuwaitTime")}
           </p>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+/* ---------- Open post: full preview of a ready post ---------- */
+
+export function PostSheet() {
+  const { open, data, close } = useSheet("post");
+  const { t, lang } = useT();
+  const photos = usePhotos();
+  const photo = data ? photos.find((p) => p.id === data.photoId) : undefined;
+  const [captionLang, setCaptionLang] = useState<Lang>(lang);
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState("");
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setEditing(false);
+      setCaptionLang(lang);
+    }
+  }
+  const caption = photo?.caption;
+  const s = useStore.getState;
+
+  const startEdit = () => {
+    if (!caption) return;
+    setText(caption[captionLang]);
+    setEditing(true);
+  };
+  const saveEdit = () => {
+    if (!photo || !caption) return;
+    s().updateCaption([photo.id], { ...caption, [captionLang]: text });
+    setEditing(false);
+    toast.success(t("captionSaved"));
+  };
+  const schedule = () => photo && s().openSheet({ type: "schedule", photoIds: [photo.id], caption });
+  const postNow = () => {
+    if (!photo || !caption) return;
+    s().publishPhotos([photo.id], caption);
+    toast.success(t("posted"));
+    close();
+  };
+
+  const footer = !photo ? null : editing ? (
+    <div className="grid grid-cols-2 gap-2">
+      <Btn size="lg" variant="secondary" onClick={() => setEditing(false)}>
+        {t("cancel")}
+      </Btn>
+      <Btn size="lg" onClick={saveEdit} disabled={!text.trim()}>
+        {t("save")}
+      </Btn>
+    </div>
+  ) : photo.status === "published" ? (
+    <div className="grid grid-cols-2 gap-2">
+      <Btn size="lg" icon={<BarChart3 />} onClick={() => s().openSheet({ type: "performance", photoId: photo.id })}>
+        {t("viewPerformance")}
+      </Btn>
+      <Btn size="lg" variant="secondary" icon={<PencilLine />} onClick={startEdit}>
+        {t("edit")}
+      </Btn>
+    </div>
+  ) : (
+    <div className="grid grid-cols-3 gap-2">
+      <Btn size="lg" className="col-span-3" icon={<CalendarClock />} onClick={schedule}>
+        {photo.status === "scheduled" ? t("reschedule") : t("schedule")}
+      </Btn>
+      <Btn size="lg" variant="secondary" className="col-span-2" icon={<Send />} onClick={postNow}>
+        {t("postNow")}
+      </Btn>
+      <Btn size="lg" variant="outline" icon={<PencilLine />} onClick={startEdit}>
+        {t("edit")}
+      </Btn>
+    </div>
+  );
+
+  return (
+    <Sheet open={open} onClose={close} title={t("readyPost")} tall footer={footer}>
+      {photo && caption && (
+        <div className="space-y-3 pb-4">
+          <div className="flex items-center justify-between gap-2 px-4">
+            <PostStatus photo={photo} />
+            <Segmented
+              label={t("language")}
+              value={captionLang}
+              onChange={(v) => (setCaptionLang(v), setEditing(false))}
+              options={[
+                { value: "en", label: "EN" },
+                { value: "ar", label: "ع" },
+              ]}
+              className="w-24 shrink-0 [&_button]:h-7"
+            />
+          </div>
+          {editing ? (
+            <div className="px-4">
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                dir={captionLang === "ar" ? "rtl" : "ltr"}
+                lang={captionLang}
+                rows={8}
+                aria-label={t("caption")}
+                autoFocus
+                className="w-full resize-none rounded-xl bg-muted px-3 py-2.5 text-[15px] leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+          ) : (
+            <div className="sm:px-4">
+              <PostPreview photos={[photo]} caption={caption[captionLang]} captionLang={captionLang} expanded />
+            </div>
+          )}
+          {photo.status === "scheduled" && photo.scheduledFor && !editing && (
+            <p className="flex items-center gap-1.5 px-4 text-[13px] text-muted-foreground">
+              <Sparkles className="size-3.5 text-brand" /> {t("scheduledFor", { when: when(photo.scheduledFor, lang) })} • {t("kuwaitTime")}
+            </p>
+          )}
         </div>
       )}
     </Sheet>

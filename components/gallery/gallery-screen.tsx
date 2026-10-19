@@ -1,22 +1,25 @@
 "use client";
 
-import { CalendarClock, ChevronLeft, FolderPlus, Heart, ImagePlus, Images, SquarePlus, Trash2 } from "lucide-react";
-import Image from "next/image";
+import { ChevronLeft, FolderPlus, Heart, ImagePlus, Images, MoreHorizontal, PencilLine, Plus, Sparkles, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { Btn, EmptyState, IconBtn, Segmented, Skel } from "@/components/kit";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useBackHandler } from "@/lib/back";
 import { date, daysFromNow, num } from "@/lib/format";
 import { useFakeLoading, useT } from "@/lib/hooks";
 import { useAlbums, usePhotos, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import type { Lang, Photo } from "@/mock/types";
 import { SMART_ALBUMS } from "./albums";
+import { PhotoImage } from "./photo-image";
 import { PhotoTile } from "./photo-tile";
 import { usePhotoActions } from "./use-photo-actions";
 
 type Tab = "library" | "albums";
 
 export function GalleryScreen() {
-  const { t, lang } = useT();
+  const { t, l, lang } = useT();
   const photos = usePhotos();
   const customAlbums = useAlbums();
   const loading = useFakeLoading();
@@ -27,8 +30,9 @@ export function GalleryScreen() {
   const [albumId, setAlbumId] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
 
-  const album = albumId ? (SMART_ALBUMS.find((a) => a.id === albumId) ?? customAlbums.find((a) => a.id === albumId)) : null;
-  const albumName = album ? ("key" in album ? t(album.key) : album.name) : "";
+  const smart = albumId ? SMART_ALBUMS.find((a) => a.id === albumId) : undefined;
+  const custom = albumId ? customAlbums.find((a) => a.id === albumId) : undefined;
+  const albumName = smart ? t(smart.key) : custom ? l(custom.name) : "";
   const visible = useMemo(() => {
     if (!albumId) return photos;
     const smart = SMART_ALBUMS.find((a) => a.id === albumId);
@@ -41,6 +45,9 @@ export function GalleryScreen() {
   }, [setSelecting]);
   useEffect(() => () => setSelecting(false), [setSelecting]);
 
+  const closeAlbum = () => (setAlbumId(null), exitSelect());
+  useBackHandler(!!albumId, closeAlbum);
+
   const toggle = useCallback((id: string) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id])), []);
   const open = useCallback(
     (id: string) => {
@@ -50,6 +57,14 @@ export function GalleryScreen() {
     [visible],
   );
 
+  const removeAlbum = () => {
+    if (!custom) return;
+    const removed = useStore.getState().deleteAlbum(custom.id);
+    closeAlbum();
+    if (removed)
+      toast.success(t("albumDeleted", { album: l(custom.name) }), { action: { label: t("undo"), onClick: () => useStore.getState().restoreAlbum(removed) } });
+  };
+
   const showGrid = tab === "library" || albumId;
 
   return (
@@ -58,7 +73,7 @@ export function GalleryScreen() {
       <div className="flex items-center gap-2 px-4 pt-1 pb-3 lg:px-0 lg:pt-4">
         {albumId ? (
           <>
-            <IconBtn label={t("back")} onClick={() => (setAlbumId(null), exitSelect())} className="-ms-2">
+            <IconBtn label={t("back")} onClick={closeAlbum} className="-ms-2">
               <ChevronLeft className="rtl:rotate-180" />
             </IconBtn>
             <div className="min-w-0 flex-1">
@@ -89,10 +104,26 @@ export function GalleryScreen() {
             {selecting ? t("cancel") : t("select")}
           </Btn>
         )}
-        {!selecting && (
+        {/* Upload adds to the library, so it lives on the top level; an empty library shows it in the empty state instead. */}
+        {!selecting && !albumId && photos.length > 0 && (
           <Btn variant="secondary" size="sm" className="rounded-full" icon={<ImagePlus />} onClick={() => openSheet({ type: "upload" })}>
             <span className="max-sm:sr-only">{t("upload")}</span>
           </Btn>
+        )}
+        {custom && !selecting && (
+          <DropdownMenu>
+            <DropdownMenuTrigger aria-label={t("albumOptions")} className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary hover:bg-muted">
+              <MoreHorizontal className="size-5" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => openSheet({ type: "albumName", albumId: custom.id })}>
+                <PencilLine /> {t("renameAlbum")}
+              </DropdownMenuItem>
+              <DropdownMenuItem variant="destructive" onClick={removeAlbum}>
+                <Trash2 /> {t("deleteAlbum")}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 
@@ -101,7 +132,7 @@ export function GalleryScreen() {
       ) : showGrid ? (
         visible.length === 0 ? (
           albumId ? (
-            <EmptyState icon={<Images />} title={t("emptyAlbumTitle")} body={t("emptyAlbumBody")} />
+            <EmptyState icon={<Images />} title={t("emptyAlbumTitle")} body={custom ? t("emptyCustomAlbumBody") : t("emptyAlbumBody")} />
           ) : (
             <EmptyState
               icon={<ImagePlus />}
@@ -119,7 +150,9 @@ export function GalleryScreen() {
         <AlbumsView photos={photos} onOpen={setAlbumId} />
       )}
 
-      {selecting && <SelectionBar ids={selected} onDone={exitSelect} onSelectAll={() => setSelected(visible.map((p) => p.id))} />}
+      {selecting && (
+        <SelectionBar ids={selected} fromAlbumId={custom?.id} onDone={exitSelect} onSelectAll={() => setSelected(visible.map((p) => p.id))} />
+      )}
     </div>
   );
 }
@@ -190,16 +223,20 @@ function GridSkeleton() {
 
 /* ---------- Albums ---------- */
 
+type AlbumCardData = { id: string; name: string; icon: typeof Images; items: Photo[] };
+
 function AlbumsView({ photos, onOpen }: { photos: Photo[]; onOpen: (id: string) => void }) {
-  const { t, lang } = useT();
+  const { t, l, lang } = useT();
   const custom = useAlbums();
-  const smart = SMART_ALBUMS.map((a) => ({ id: a.id, name: t(a.key), icon: a.icon, items: photos.filter(a.filter) }));
-  const mine = custom.map((a) => ({ id: a.id, name: a.name, icon: Images, items: photos.filter((p) => p.albums.includes(a.id)) }));
-  const card = (a: (typeof smart)[number]) => (
+  const openSheet = useStore((s) => s.openSheet);
+  const mine: AlbumCardData[] = custom.map((a) => ({ id: a.id, name: l(a.name), icon: Images, items: photos.filter((p) => p.albums.includes(a.id)) }));
+  const smart: AlbumCardData[] = SMART_ALBUMS.map((a) => ({ id: a.id, name: t(a.key), icon: a.icon, items: photos.filter(a.filter) }));
+  const grid = "grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3 lg:grid-cols-4";
+  const card = (a: AlbumCardData) => (
     <button key={a.id} type="button" onClick={() => onOpen(a.id)} className="group min-w-0 rounded-xl text-start">
       <span className="relative block aspect-square overflow-hidden rounded-xl bg-muted">
         {a.items[0] ? (
-          <Image src={a.items[0].thumb} alt="" fill sizes="(min-width: 1024px) 220px, 45vw" className="object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+          <PhotoImage photo={a.items[0]} sizes="(min-width: 1024px) 220px, 45vw" className="transition-transform duration-300 group-hover:scale-[1.03]" />
         ) : (
           <span className="grid size-full place-items-center text-muted-foreground">
             <a.icon className="size-9" strokeWidth={1.5} />
@@ -211,21 +248,30 @@ function AlbumsView({ photos, onOpen }: { photos: Photo[]; onOpen: (id: string) 
     </button>
   );
   return (
-    <div className="space-y-6 px-4 lg:px-0">
-      <div className="grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">{smart.map(card)}</div>
-      {mine.length > 0 && (
-        <div>
-          <h2 className="mb-3 text-[17px] font-semibold">{t("myAlbums")}</h2>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-4 sm:grid-cols-3 lg:grid-cols-4">{mine.map(card)}</div>
+    <div className="space-y-7 px-4 lg:px-0">
+      <section>
+        <h2 className="mb-3 text-[17px] font-semibold">{t("myAlbums")}</h2>
+        <div className={grid}>
+          {mine.map(card)}
+          <button type="button" onClick={() => openSheet({ type: "albumName" })} className="group min-w-0 rounded-xl text-start">
+            <span className="grid aspect-square place-items-center rounded-xl border-2 border-dashed border-foreground/15 text-muted-foreground transition-colors group-hover:bg-muted">
+              <Plus className="size-8" strokeWidth={1.5} />
+            </span>
+            <span className="mt-1.5 block truncate text-sm font-medium">{t("newAlbum")}</span>
+          </button>
         </div>
-      )}
+      </section>
+      <section>
+        <h2 className="mb-3 text-[17px] font-semibold">{t("collections")}</h2>
+        <div className={grid}>{smart.map(card)}</div>
+      </section>
     </div>
   );
 }
 
 /* ---------- Select mode toolbar ---------- */
 
-function SelectionBar({ ids, onDone, onSelectAll }: { ids: string[]; onDone: () => void; onSelectAll: () => void }) {
+function SelectionBar({ ids, fromAlbumId, onDone, onSelectAll }: { ids: string[]; fromAlbumId?: string; onDone: () => void; onSelectAll: () => void }) {
   const { t, lang } = useT();
   const actions = usePhotoActions();
   const photos = usePhotos();
@@ -241,13 +287,10 @@ function SelectionBar({ ids, onDone, onSelectAll }: { ids: string[]; onDone: () 
         <button type="button" onClick={onSelectAll} className="min-w-0 flex-1 truncate rounded-xl px-2 text-start text-[13px] font-semibold">
           {none ? t("selectPhotos") : t("selectedCount", { n: num(ids.length, lang) })}
         </button>
-        <BarBtn label={t("createPost")} disabled={none} onClick={act(() => actions.createPost(ids))}>
-          <SquarePlus />
+        <BarBtn label={t("createWithAi")} disabled={none} onClick={act(() => actions.createWithAi(ids))} className="text-brand-ink">
+          <Sparkles />
         </BarBtn>
-        <BarBtn label={t("schedule")} disabled={none} onClick={act(() => actions.schedule(ids))}>
-          <CalendarClock />
-        </BarBtn>
-        <BarBtn label={t("addToAlbum")} disabled={none} onClick={act(() => actions.addToAlbum(ids))}>
+        <BarBtn label={fromAlbumId ? t("addOrMove") : t("addToAlbum")} disabled={none} onClick={act(() => actions.addToAlbum(ids, fromAlbumId))}>
           <FolderPlus />
         </BarBtn>
         <BarBtn label={allFavorite ? t("unfavorite") : t("favorite")} disabled={none} onClick={act(() => actions.favorite(ids, !allFavorite))}>

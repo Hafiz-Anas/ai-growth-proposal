@@ -1,11 +1,12 @@
 "use client";
 
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Bookmark, CalendarClock, Check, ChevronDown, CircleCheck, Copy, LoaderCircle, PencilLine, RefreshCw, Send, Sparkles } from "lucide-react";
+import { CalendarClock, Check, ChevronDown, CircleCheck, Copy, ImageDown, LoaderCircle, PencilLine, RefreshCw, Send, Sparkles } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { BarChart } from "@/components/charts";
+import { PhotoImage } from "@/components/gallery/photo-image";
 import { Avatar, Btn, Chip, Segmented, Skel } from "@/components/kit";
 import { compact, num, when } from "@/lib/format";
 import { useT } from "@/lib/hooks";
@@ -13,8 +14,9 @@ import type { MessageKey } from "@/lib/i18n";
 import { useAccount, useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { answer, type ChatContext } from "@/mock/ai-chat";
-import { DIRECTION_LABEL, fullCaption, inspirationSources, productsFor, retone, type AiMsg, type PostDraft, type Step } from "@/mock/ai-studio";
-import type { CaptionTone, Lang } from "@/mock/types";
+import { DIRECTION_LABEL, FEATURE_LABEL, fullCaption, inspirationSources, productsFor, recaption, retone, type AiMsg, type PostDraft, type Step } from "@/mock/ai-studio";
+import { findCategory } from "@/mock/categories";
+import type { CaptionTone, Lang, Photo } from "@/mock/types";
 import type { AiEngine } from "./engine";
 
 type AiOf<K> = Extract<AiMsg, { role: "ai"; kind: K }>;
@@ -42,7 +44,7 @@ export function UserMessage({ msg }: { msg: Extract<AiMsg, { role: "user" }> }) 
         <div className="flex max-w-[85%] flex-wrap justify-end gap-1.5">
           {attached.slice(0, 4).map((p) => (
             <span key={p.id} className="relative size-20 overflow-hidden rounded-2xl bg-muted sm:size-24">
-              <Image src={p.thumb} alt={l(p.dish)} fill sizes="96px" className="object-cover" />
+              <PhotoImage photo={p} alt={l(p.dish)} sizes="96px" />
             </span>
           ))}
           {attached.length > 4 && <span className="grid size-20 place-items-center rounded-2xl bg-muted text-sm font-semibold sm:size-24">+{attached.length - 4}</span>}
@@ -89,6 +91,8 @@ const STEP_KEY: Record<Step["key"], MessageKey> = {
   hashtags: "stepHashtags",
   time: "stepTime",
   directions: "stepDirections",
+  images: "stepImages",
+  combine: "stepCombine",
 };
 
 /** Runs the visible "working" steps, then marks the message ready so its result shows. */
@@ -198,10 +202,39 @@ function PostCard({ msgId, post, ctx }: { msgId: string; post: PostDraft; ctx: C
     update({ status: "posted" });
     toast.success(t("posted"));
   };
-  const saveDraft = () => {
-    s().saveDraftPhotos(post.photoIds, fullCaption(post));
-    update({ status: "draft" });
-    toast.success(t("draftSaved"));
+  // Saves the post (photo, caption, hashtags) to the gallery: AI Generated + its category album. Nothing is scheduled.
+  const saveToGallery = () => {
+    s().savePost(post.photoIds, fullCaption(post));
+    update({ status: "saved" });
+    const category = findCategory(account.id, photos[0]?.category);
+    toast.success(category ? t("savedToGalleryIn", { album: l(category.name) }) : t("savedToGallery"));
+  };
+  const openInGallery = () => {
+    s().closeSheet();
+    s().openViewer(post.photoIds, 0);
+  };
+
+  // Picking an AI image saves it to the AI Generated album; switching away removes the one that's no longer used.
+  const pickVariant = (i: number | undefined) => {
+    if (!post.variants || !post.originalId || i === post.variant) return;
+    const variants = [...post.variants];
+    const prev = post.variant !== undefined ? variants[post.variant] : undefined;
+    if (prev?.photoId) {
+      const used = s().photos[s().activeAccountId].find((p) => p.id === prev.photoId);
+      if (used && used.status === "none" && !used.caption && !used.favorite) s().deletePhotos([used.id]);
+      variants[post.variant!] = { ...prev, photoId: undefined };
+    }
+    let cover = post.originalId;
+    if (i !== undefined) {
+      const { src, thumb, look, dish, category, credit } = variants[i];
+      cover = s().addAiImage({ src, thumb, look, dish, category, credit });
+      variants[i] = { ...variants[i], photoId: cover };
+      toast.success(t("aiImageSaved"));
+    }
+    // The caption follows the picked image's item, unless the user already wrote their own.
+    const subject = i !== undefined ? variants[i] : ctx.photos.find((p) => p.id === post.originalId);
+    const next = subject && !post.edited ? recaption(ctx, post, subject) : post;
+    useStore.getState().updateAiMsg(msgId, { post: { ...next, variants, variant: i, photoIds: [cover, ...post.photoIds.slice(1)] } });
   };
 
   const badge = post.inspiredBy ? (
@@ -225,9 +258,53 @@ function PostCard({ msgId, post, ctx }: { msgId: string; post: PostDraft; ctx: C
         </span>
       </header>
 
-      <Photos photos={photos.map((p) => ({ id: p.id, src: p.src, alt: l(p.dish) }))} />
+      <Photos photos={photos} />
 
       <div className="space-y-3 p-3">
+        {post.variants && (
+          <div>
+            <p className="text-[12px] font-semibold text-muted-foreground">{t("aiImagesTitle")}</p>
+            <div className="-mx-3 mt-1.5 flex gap-2 overflow-x-auto px-3 pb-1 max-lg:no-scrollbar" role="radiogroup" aria-label={t("aiImagesTitle")}>
+              {[undefined, ...post.variants.map((_, i) => i)].map((i) => {
+                const original = i === undefined;
+                const image = original ? ctx.photos.find((p) => p.id === post.originalId) : post.variants![i];
+                if (!image) return null;
+                const on = post.variant === i;
+                return (
+                  <button
+                    key={original ? "original" : i}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    disabled={post.status !== "new" || writing}
+                    onClick={() => pickVariant(i)}
+                    className={cn(
+                      "relative size-[72px] shrink-0 overflow-hidden rounded-xl bg-muted transition-[transform,opacity] enabled:active:scale-95 disabled:opacity-60",
+                      on && "ring-[3px] ring-brand ring-offset-2 ring-offset-card",
+                    )}
+                  >
+                    <PhotoImage photo={image} sizes="72px" />
+                    <span
+                      className={cn(
+                        "absolute inset-x-1 bottom-1 inline-flex items-center justify-center gap-0.5 truncate rounded-full px-1 py-0.5 text-[10px] leading-none font-bold text-white",
+                        original ? "bg-black/55" : "bg-brand/90",
+                      )}
+                    >
+                      {!original && <Sparkles className="size-2.5 shrink-0" />}
+                      {original ? t("original") : t("aiShort")}
+                    </span>
+                    {on && (
+                      <span className="absolute end-1 top-1 grid size-4 place-items-center rounded-full bg-brand text-white">
+                        <Check className="size-2.5" strokeWidth={3.5} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11.5px] leading-snug text-muted-foreground">{t("aiImagesHint")}</p>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2">
           <p className="text-[12px] font-semibold text-muted-foreground">{t("caption")}</p>
           <Segmented
@@ -288,10 +365,23 @@ function PostCard({ msgId, post, ctx }: { msgId: string; post: PostDraft; ctx: C
         )}
 
         {post.status !== "new" ? (
-          <p className="flex items-center gap-2 rounded-xl bg-brand-soft px-3 py-2.5 text-[13.5px] font-semibold text-brand-ink" role="status">
+          <div className="flex items-center gap-2 rounded-xl bg-brand-soft px-3 py-2 text-[13.5px] font-semibold text-brand-ink" role="status">
             <Check className="size-4 shrink-0" strokeWidth={3} />
-            {post.status === "scheduled" ? t("scheduledFor", { when: when(post.time, lang) }) : post.status === "posted" ? t("postedStatus") : t("draftStatus")}
-          </p>
+            <span className="min-w-0 flex-1">
+              {post.status === "scheduled"
+                ? t("scheduledFor", { when: when(post.time, lang) })
+                : post.status === "posted"
+                  ? t("postedStatus")
+                  : post.status === "saved"
+                    ? t("savedStatus")
+                    : t("draftStatus")}
+            </span>
+            {photos.length > 0 && (
+              <button type="button" onClick={openInGallery} className="shrink-0 rounded-full px-2 py-1 text-[13px] underline-offset-2 hover:underline">
+                {t("openInGallery")}
+              </button>
+            )}
+          </div>
         ) : editing ? (
           <div className="grid grid-cols-2 gap-2">
             <Btn variant="secondary" onClick={() => setEditing(false)}>
@@ -324,7 +414,7 @@ function PostCard({ msgId, post, ctx }: { msgId: string; post: PostDraft; ctx: C
                 disabled={writing}
               />
               <CardAction icon={<RefreshCw className={cn(writing && "animate-spin")} />} label={t("regenerate")} onClick={() => setToneMenu((o) => !o)} pressed={toneMenu} disabled={writing} />
-              <CardAction icon={<Bookmark />} label={t("saveDraft")} onClick={saveDraft} disabled={writing} />
+              <CardAction icon={<ImageDown />} label={t("saveToGallery")} onClick={saveToGallery} disabled={writing} />
             </div>
             {toneMenu && (
               <div className="flex flex-wrap gap-2 pt-1">
@@ -355,12 +445,13 @@ function CardAction({ icon, label, onClick, pressed, disabled }: { icon: ReactNo
       )}
     >
       {icon}
-      <span className="w-full truncate text-center">{label}</span>
+      <span className="line-clamp-2 w-full text-center">{label}</span>
     </button>
   );
 }
 
-function Photos({ photos }: { photos: { id: string; src: string; alt: string }[] }) {
+function Photos({ photos }: { photos: Photo[] }) {
+  const { t, l } = useT();
   const [index, setIndex] = useState(0);
   return (
     <div className="relative">
@@ -370,7 +461,12 @@ function Photos({ photos }: { photos: { id: string; src: string; alt: string }[]
       >
         {photos.map((p) => (
           <div key={p.id} className="relative aspect-square w-full shrink-0 snap-center">
-            <Image src={p.src} alt={p.alt} fill sizes="420px" className="object-cover" />
+            <PhotoImage photo={p} full alt={l(p.dish)} sizes="420px" />
+            {p.source === "ai" && (
+              <span className="absolute start-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-brand/90 px-2 py-0.5 text-[11px] font-bold text-white">
+                <Sparkles className="size-3" /> {t("aiImage")}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -392,6 +488,22 @@ export function DirectionsMessage({ msg, ctx, engine }: { msg: AiOf<"directions"
     <AiRow id={msg.id}>
       {msg.text && msg.ready && <p className="whitespace-pre-line" dir="auto">{l(msg.text)}</p>}
       <Steps steps={msg.steps} done={done} ready={msg.ready} />
+      {msg.ready && msg.features && (
+        <ul className="grid max-w-md gap-1.5" aria-label={t("combineTook")}>
+          {msg.features.map((f) => {
+            const photo = ctx.photos.find((p) => p.id === f.photoId);
+            return (
+              <li key={f.photoId} className="flex items-center gap-2.5 rounded-xl border bg-card p-1.5 pe-3">
+                <span className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-muted">{photo && <PhotoImage photo={photo} alt={l(photo.dish)} sizes="44px" />}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13.5px] font-semibold">{l(FEATURE_LABEL[f.key])}</span>
+                  <span className="block truncate text-[12px] text-muted-foreground">{t("fromPhoto", { name: photo ? l(photo.dish) : "" })}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {msg.ready && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -400,7 +512,7 @@ export function DirectionsMessage({ msg, ctx, engine }: { msg: AiOf<"directions"
           role="list"
         >
           {msg.options.map((o, i) => {
-            const photo = ctx.photos.find((p) => p.id === o.photoIds[0]);
+            const photo = o.aiImage ?? ctx.photos.find((p) => p.id === o.photoIds[0]);
             const chosen = msg.chosen === i;
             const other = msg.chosen !== undefined && !chosen;
             return (
@@ -414,10 +526,15 @@ export function DirectionsMessage({ msg, ctx, engine }: { msg: AiOf<"directions"
                 )}
               >
                 <div className="relative aspect-square bg-muted">
-                  {photo && <Image src={photo.thumb} alt={l(photo.dish)} fill sizes="250px" className="object-cover" />}
+                  {photo && <PhotoImage photo={photo} alt={l(photo.dish)} sizes="250px" />}
                   <span className="absolute start-2 top-2 rounded-full bg-black/60 px-2 py-0.5 text-[11.5px] font-semibold text-white backdrop-blur">
                     {l(DIRECTION_LABEL[o.direction ?? "warm"])}
                   </span>
+                  {o.aiImage && (
+                    <span className="absolute end-2 top-2 inline-flex items-center gap-0.5 rounded-full bg-brand/90 px-1.5 py-0.5 text-[10.5px] font-bold text-white">
+                      <Sparkles className="size-2.5" /> {t("aiShort")}
+                    </span>
+                  )}
                 </div>
                 <p className="line-clamp-4 flex-1 px-3 pt-2.5 text-[13.5px] leading-snug whitespace-pre-line" dir="auto">
                   {l(o.caption)}
@@ -566,7 +683,7 @@ export function AnswerMessage({ msg, ctx, animate }: { msg: AiOf<"answer">; ctx:
           className="flex w-full max-w-sm items-center gap-2.5 rounded-xl border bg-card p-2 text-start hover:bg-muted/60"
         >
           <span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-muted">
-            <Image src={photo.thumb} alt="" fill sizes="48px" className="object-cover" />
+            <PhotoImage photo={photo} sizes="48px" />
           </span>
           <span className="truncate text-[14px] font-medium">{l(photo.dish)}</span>
         </button>

@@ -1,6 +1,7 @@
 // Mock AI answers. Each answer is built from the active account's mock data, so switching accounts
 // changes the answers too. Nothing is sent to any AI service.
 import { compact, hourLabel, num, pct, signed, weekday } from "@/lib/format";
+import { captionFor } from "./categories";
 import { NOW, kuwaitAt } from "./clock";
 import { TIME_SLOTS } from "./insights";
 import type { Account, Competitor, Insights, L, Lang, Photo } from "./types";
@@ -65,10 +66,7 @@ export function answer(id: string, ctx: ChatContext): AiAnswer {
       const saturday = ins.bestTimes[0];
       const hour = TIME_SLOTS[saturday.indexOf(Math.max(...saturday))] % 24;
       const at = kuwaitAt(1, hour === 0 ? 23 : hour, hour === 0 ? 30 : 0);
-      const caption = {
-        en: account.captions.friendly.en.replace("{dish}", photo.dish.en),
-        ar: account.captions.friendly.ar.replace("{dish}", photo.dish.ar),
-      };
+      const caption = captionFor(account, photo, "friendly");
       return {
         text: both((l) =>
           l === "ar"
@@ -83,7 +81,7 @@ export function answer(id: string, ctx: ChatContext): AiAnswer {
       return {
         text: both((l) => (l === "ar" ? `هذا وصف لصورة «${photo.dish.ar}»:` : `Here's a caption for your "${photo.dish.en}" photo:`)),
         bullets: [
-          { en: account.captions.base.en.replace("{dish}", photo.dish.en), ar: account.captions.base.ar.replace("{dish}", photo.dish.ar) },
+          captionFor(account, photo, "base"),
         ],
         photoId: photo.id,
       };

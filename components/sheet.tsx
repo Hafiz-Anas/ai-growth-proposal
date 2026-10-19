@@ -1,9 +1,9 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { AnimatePresence, motion, useDragControls, type PanInfo } from "framer-motion";
+import { AnimatePresence, animate, motion, useDragControls, useMotionValue, type PanInfo } from "framer-motion";
 import { XIcon } from "lucide-react";
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { useIsDesktop, useT } from "@/lib/hooks";
 
@@ -37,7 +37,57 @@ export function Sheet({ open, onClose, title, start, end, footer, children, desk
   const { t, dir } = useT();
   const drag = useDragControls();
   const popupRef = useRef<HTMLDivElement>(null);
+  // State, not a ref: the body mounts inside the portal after this component's effects first run.
+  const [body, setBody] = useState<HTMLDivElement | null>(null);
+  const y = useMotionValue(0);
   const mode = isDesktop ? desktop : "sheet";
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  // Pull-down on the body: only when it's scrolled to the top and the finger moves mostly down.
+  useEffect(() => {
+    if (mode !== "sheet" || !body) return;
+    let start: { x: number; y: number } | null = null;
+    let pulling = false;
+    const onStart = (e: TouchEvent) => {
+      const target = e.target as HTMLElement;
+      start = body.scrollTop <= 0 && !target.closest("input, textarea, [data-no-sheet-drag]") ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+      pulling = false;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!start) return;
+      const dy = e.touches[0].clientY - start.y;
+      const dx = Math.abs(e.touches[0].clientX - start.x);
+      if (!pulling) {
+        if (dy < -4 || dx > Math.abs(dy)) return void (start = null);
+        if (dy > 8) pulling = true;
+      }
+      if (pulling) {
+        e.preventDefault();
+        y.set(Math.max(0, dy));
+      }
+    };
+    const onEnd = () => {
+      if (pulling) {
+        if (y.get() > 110) onCloseRef.current();
+        else animate(y, 0, spring);
+      }
+      start = null;
+      pulling = false;
+    };
+    body.addEventListener("touchstart", onStart, { passive: true });
+    body.addEventListener("touchmove", onMove, { passive: false });
+    body.addEventListener("touchend", onEnd);
+    body.addEventListener("touchcancel", onEnd);
+    return () => {
+      body.removeEventListener("touchstart", onStart);
+      body.removeEventListener("touchmove", onMove);
+      body.removeEventListener("touchend", onEnd);
+      body.removeEventListener("touchcancel", onEnd);
+    };
+  }, [body, mode, y]);
   const side = dir === "rtl" ? "-100%" : "100%";
 
   const motionProps =
@@ -81,6 +131,7 @@ export function Sheet({ open, onClose, title, start, end, footer, children, desk
               render={
                 <motion.div
                   {...motionProps}
+                  style={mode === "sheet" ? { y } : undefined}
                   drag={mode === "sheet" ? "y" : false}
                   dragControls={drag}
                   dragListener={false}
@@ -109,7 +160,9 @@ export function Sheet({ open, onClose, title, start, end, footer, children, desk
                   </div>
                 </div>
               </div>
-              <div className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain", bodyClassName)}>{children}</div>
+              <div ref={setBody} className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain", bodyClassName)}>
+                {children}
+              </div>
               {footer && <div className="shrink-0 border-t px-4 py-3">{footer}</div>}
             </Dialog.Popup>
           </Dialog.Portal>

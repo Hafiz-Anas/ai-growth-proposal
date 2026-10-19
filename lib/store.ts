@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { accounts as mockAccounts } from "@/mock/accounts";
+import { categoriesFor, categoryAlbumId } from "@/mock/categories";
 import type { ChatMode } from "@/mock/ai-chat";
 import { NOW } from "@/mock/clock";
 import { competitorSuggestions, competitors as mockCompetitors } from "@/mock/competitors";
@@ -35,7 +36,9 @@ export type SheetState =
   | { type: "notifications" }
   | { type: "ai" }
   | { type: "schedule"; photoIds: string[]; caption?: L; suggested?: string }
-  | { type: "album"; photoIds: string[] }
+  | { type: "album"; photoIds: string[]; fromAlbumId?: string }
+  | { type: "albumName"; albumId?: string; photoIds?: string[] }
+  | { type: "post"; photoId: string }
   | { type: "upload" }
   | { type: "performance"; photoId: string }
   | { type: "addCompetitor" }
@@ -48,6 +51,7 @@ export type SheetState =
   | { type: "logout" };
 
 type PerAccount<T> = Record<string, T>;
+type RemovedAlbum = { album: CustomAlbum; index: number; photoIds: string[] };
 
 interface DemoData {
   accounts: Account[];
@@ -98,8 +102,18 @@ interface State extends DemoData {
   deletePhotos: (ids: string[]) => Photo[];
   restorePhotos: (photos: Photo[]) => void;
   createAlbum: (name: string) => string;
-  addToAlbum: (ids: string[], albumId: string) => void;
-  uploadPhotos: (items: Pick<Photo, "src" | "thumb" | "dish" | "credit">[]) => void;
+  renameAlbum: (id: string, name: string) => void;
+  /** Deletes the album only; its photos stay in the library. Returns what Undo needs. */
+  deleteAlbum: (id: string) => RemovedAlbum | undefined;
+  restoreAlbum: (removed: RemovedAlbum) => void;
+  /** Adds photos to an album, or moves them out of `moveFrom`. A category album also sets their category. */
+  addToAlbum: (ids: string[], albumId: string, moveFrom?: string) => void;
+  uploadPhotos: (items: Pick<Photo, "src" | "thumb" | "dish" | "credit" | "category">[]) => void;
+  /** Saves an AI-made image into the gallery (AI Generated + its category album). Returns its id. */
+  addAiImage: (item: Pick<Photo, "src" | "thumb" | "dish" | "credit" | "category" | "look">) => string;
+  /** Saves an AI post (photo + caption with hashtags) to the gallery without scheduling it. */
+  savePost: (ids: string[], caption: L) => void;
+  updateCaption: (ids: string[], caption: L) => void;
   schedulePhotos: (ids: string[], at: string, caption?: L) => void;
   publishPhotos: (ids: string[], caption: L) => void;
   saveDraftPhotos: (ids: string[], caption: L) => void;
@@ -141,7 +155,7 @@ function freshData(): DemoData {
   return {
     accounts: structuredClone(mockAccounts),
     photos: per((id) => structuredClone(initialPhotos[id])),
-    albums: per(() => []),
+    albums: per((id) => categoriesFor(id).map((c) => ({ id: categoryAlbumId(c.id), name: c.name, category: c.id }))),
     engagement: per((id) => buildEngagement(id, initialPhotos[id])),
     recs: per((id) => structuredClone(mockRecs[id])),
     competitors: per((id) => structuredClone(mockCompetitors[id])),
@@ -218,11 +232,34 @@ export const useStore = create<State>()(
           })),
         createAlbum: (name) => {
           const id = nextId("album");
-          set((s) => ({ albums: { ...s.albums, [acc()]: [...s.albums[acc()], { id, name }] } }));
+          set((s) => ({ albums: { ...s.albums, [acc()]: [...s.albums[acc()], { id, name: { en: name, ar: name } }] } }));
           return id;
         },
-        addToAlbum: (ids, albumId) =>
-          mapPhotos(ids, (p) => (p.albums.includes(albumId) ? p : { ...p, albums: [...p.albums, albumId] })),
+        renameAlbum: (id, name) =>
+          set((s) => ({ albums: { ...s.albums, [acc()]: s.albums[acc()].map((a) => (a.id === id ? { ...a, name: { en: name, ar: name } } : a)) } })),
+        deleteAlbum: (id) => {
+          const list = get().albums[acc()];
+          const index = list.findIndex((a) => a.id === id);
+          if (index < 0) return undefined;
+          const photoIds = get().photos[acc()].filter((p) => p.albums.includes(id)).map((p) => p.id);
+          set((s) => ({
+            albums: { ...s.albums, [acc()]: list.filter((a) => a.id !== id) },
+            photos: { ...s.photos, [acc()]: s.photos[acc()].map((p) => (p.albums.includes(id) ? { ...p, albums: p.albums.filter((a) => a !== id) } : p)) },
+          }));
+          return { album: list[index], index, photoIds };
+        },
+        restoreAlbum: ({ album, index, photoIds }) => {
+          set((s) => {
+            const list = [...s.albums[acc()]];
+            list.splice(index, 0, album);
+            return { albums: { ...s.albums, [acc()]: list } };
+          });
+          mapPhotos(photoIds, (p) => ({ ...p, albums: [...p.albums, album.id] }));
+        },
+        addToAlbum: (ids, albumId, moveFrom) => {
+          const category = get().albums[acc()].find((a) => a.id === albumId)?.category;
+          mapPhotos(ids, (p) => ({ ...p, albums: [...p.albums.filter((a) => a !== moveFrom && a !== albumId), albumId], category: category ?? p.category }));
+        },
         uploadPhotos: (items) =>
           set((s) => {
             const added: Photo[] = items.map((it, i) => ({
@@ -233,10 +270,34 @@ export const useStore = create<State>()(
               status: "none",
               source: "upload",
               favorite: false,
-              albums: [],
+              albums: it.category ? [categoryAlbumId(it.category)] : [],
             }));
             return { photos: { ...s.photos, [acc()]: [...added, ...s.photos[acc()]] } };
           }),
+        addAiImage: (item) => {
+          const id = nextId("ai");
+          const photo: Photo = {
+            ...item,
+            id,
+            accountId: acc(),
+            takenAt: NOW.toISOString(),
+            status: "none",
+            source: "ai",
+            favorite: false,
+            albums: item.category ? [categoryAlbumId(item.category)] : [],
+          };
+          set((s) => ({ photos: { ...s.photos, [acc()]: [photo, ...s.photos[acc()]] } }));
+          return id;
+        },
+        savePost: (ids, caption) =>
+          mapPhotos(ids, (p) => ({
+            ...p,
+            caption,
+            aiPost: true,
+            status: p.status === "none" ? "draft" : p.status,
+            albums: p.category && !p.albums.includes(categoryAlbumId(p.category)) ? [...p.albums, categoryAlbumId(p.category)] : p.albums,
+          })),
+        updateCaption: (ids, caption) => mapPhotos(ids, (p) => ({ ...p, caption })),
         schedulePhotos: (ids, at, caption) =>
           mapPhotos(ids, (p) => ({ ...p, status: "scheduled", scheduledFor: at, caption: caption ?? p.caption })),
         publishPhotos: (ids, caption) => {

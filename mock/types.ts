@@ -53,6 +53,12 @@ export interface Photo {
   source: PhotoSource;
   favorite: boolean;
   albums: string[];
+  /** Category id (Sweets, Main dishes…): what the photo shows. The AI writes posts about this. */
+  category?: string;
+  /** A post the AI wrote, saved to the gallery (it shows in the AI Generated album). */
+  aiPost?: boolean;
+  /** AI-made images reuse a mock photo with a different look (1–3); see components/gallery/photo-image.tsx. */
+  look?: number;
   scheduledFor?: string;
   publishedAt?: string;
   postType?: PostType;
@@ -64,7 +70,9 @@ export interface Photo {
 
 export interface CustomAlbum {
   id: string;
-  name: string;
+  name: L;
+  /** Set on category albums: photos moved in take this category. */
+  category?: string;
 }
 
 export type EngagementKind = "comment" | "message";

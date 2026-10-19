@@ -15,6 +15,7 @@ export const SMART_ALBUMS: SmartAlbum[] = [
   { id: "instagram", key: "instagram", icon: Send, filter: (p) => p.status === "published" },
   { id: "drafts", key: "drafts", icon: PencilLine, filter: (p) => p.status === "draft" },
   { id: "scheduled", key: "scheduled", icon: CalendarClock, filter: (p) => p.status === "scheduled" },
-  { id: "ai", key: "aiGenerated", icon: Sparkles, filter: (p) => p.source === "ai" },
+  // AI-made images, and posts the AI wrote that were saved to the gallery.
+  { id: "ai", key: "aiGenerated", icon: Sparkles, filter: (p) => p.source === "ai" || !!p.aiPost },
   { id: "favorites", key: "favorites", icon: Heart, filter: (p) => p.favorite },
 ];

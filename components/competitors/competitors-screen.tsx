@@ -57,16 +57,9 @@ export function CompetitorsScreen() {
 
 /* Instagram stories-style row of competitors */
 function StoryRow({ competitors }: { competitors: Competitor[] }) {
-  const { t } = useT();
   const openSheet = useStore((s) => s.openSheet);
   return (
     <div className="no-scrollbar flex gap-4 overflow-x-auto px-4 lg:px-0">
-      <button type="button" onClick={() => openSheet({ type: "addCompetitor" })} className="flex w-[72px] shrink-0 flex-col items-center gap-1.5">
-        <span className="grid size-[66px] place-items-center rounded-full border-2 border-dashed border-foreground/25">
-          <Plus className="size-6" />
-        </span>
-        <span className="w-full truncate text-center text-[11.5px]">{t("add")}</span>
-      </button>
       {competitors.map((c) => (
         <button key={c.id} type="button" onClick={() => openSheet({ type: "competitor", id: c.id })} className="flex w-[72px] shrink-0 flex-col items-center gap-1.5">
           <Avatar src={c.avatar} alt={c.handle} size={66} ring />
